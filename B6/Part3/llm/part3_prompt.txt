@@ -20,7 +20,7 @@ Then actually compile and run all four and save each real output as test_result.
 
 Finally give me four CSV rows with these columns: pattern_name, instance_name, language, snippet_path, source_loc, max_function_cc, runtime_compiler, test_command, test_result, median_process_ms, language_notes. In language_notes say how the abstraction and the factory are expressed in that language. Do not delete __pycache__, .class or binary files silently; list them so I can exclude them from the upload.
 
-
+--------------------------
 I need Part 3 (cross-language comparison) of a design-patterns case study for one pattern. Never report a test result or timing you did not actually get; if a tool is missing, stop and tell me.
 
 Pattern: Observer (push model). Source instance: "Booking Lifecycle Notification" from my C# change CH04 (FlemanApi/Service/Notifications/, commit 9be38a6f; code in Part2/changes/Change4/diff.patch). Participants: IBookingEventPublisher (Subject) with Subscribe, Unsubscribe and PublishAsync; BookingEventPublisher (ConcreteSubject); IBookingEventObserver (Observer) with OnBookingEventAsync(BookingEvent); EmailBookingObserver and AuditLogBookingObserver (ConcreteObservers); BookingEvent record and BookingEventKind enum (CREATED, MODIFIED, CANCELLED).
