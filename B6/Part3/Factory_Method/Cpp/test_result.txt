@@ -1,0 +1,8 @@
+PASS 1 STANDARD: standard rules, deposit(100) = 0, no rate errors
+PASS 2 ELECTRIC: deposit(60) = 120, no rate errors
+PASS 3 COMMERCIAL: deposit(80) = 400
+PASS 4 COMMERCIAL: missing weeklyRate gives exactly one error
+PASS 5 COMMERCIAL: weeklyRate 500 gives no errors
+PASS 6 every category: create(category).category() equals that category
+PASS 7 unknown category (static_cast<VehicleCategory>(999)) is rejected with an error
+PASS 7/7
