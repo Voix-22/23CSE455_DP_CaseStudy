@@ -1,0 +1,19 @@
+language: cpp
+tool: g++ (Rev13, Built by MSYS2 project) 15.2.0
+command: test_runner.exe
+working folder: Part3/FactoryMethod_VehicleCategoryRules/cpp
+method: wall-clock time of the whole test runner process, measured with
+        time.perf_counter() around subprocess.run() in measure.py.
+        Includes process start-up (JVM / interpreter / runtime load) and
+        the cost of creating the child process and capturing its output.
+        Compiled first, 1 warm-up run discarded, 5 measured runs.
+
+run 1: 12.943 ms (exit code 0)
+run 2: 14.550 ms (exit code 0)
+run 3: 14.673 ms (exit code 0)
+run 4: 12.399 ms (exit code 0)
+run 5: 16.545 ms (exit code 0)
+
+median: 14.550 ms
+min: 12.399 ms
+max: 16.545 ms
