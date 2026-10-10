@@ -1,0 +1,8 @@
+metric,baseline,after_change,measurement_scope,source_or_method,notes
+production_source_LOC,1039,1313,"Pricing-related .NET production files listed in the report","Line count of baseline commit files versus supplied working-tree files","Includes full BookingService, StaffService, and Program.cs files; counts are not exclusively attributable to pricing logic."
+pricing_utility_LOC,36,215,"WanderCar_DotNet/src/FlemanApi/Util pricing-related files","Baseline RentalRateCalculator.cs versus calculator plus seven new pricing abstraction/policy/selector/settings/duration files","Source LOC only; excludes comments? Includes all nonblank and blank lines as stored."
+pricing_test_LOC,99,337,"Pricing utility tests","Baseline RentalRateCalculatorTests.cs versus that file plus StandardPricingPolicyTests.cs and PricingPolicyTests.cs","Includes full test files; does not measure test quality."
+full_suite_tests,183,205,"FlemanApi.Tests full suite","Captured user-provided dotnet test summaries","Baseline: 182 passed, 1 failed; final: 205 passed, 0 failed. Test counts changed as tests were added."
+full_suite_failures,1,0,"FlemanApi.Tests full suite","Captured user-provided dotnet test summaries","Baseline failure was ProcessReturnAsync_CreatesInvoiceHeaderAndDetails."
+pricing_policy_tests,,22,"Pricing policy tests","Captured user-provided dotnet test summary","22 passed, 0 failed."
+test_duration_seconds,9,4,"FlemanApi.Tests full suite","Captured user-provided console summaries","Environment/timing variability; do not claim performance improvement from this single run."

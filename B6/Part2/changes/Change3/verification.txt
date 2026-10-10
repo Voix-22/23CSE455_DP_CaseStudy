@@ -1,0 +1,14 @@
+
+# Human verification checklist — CH02
+
+- [ ] Confirm baseline commit is `dfc61ab8dd6f9bbb2301171457dc03946a249576`.
+- [ ] Confirm after-state commit hash after committing the intended CH02 files.
+- [ ] Inspect `git diff dfc61ab8dd6f9bbb2301171457dc03946a249576...HEAD` (or the working-tree diff before commit).
+- [ ] Confirm `IPricingPolicy` has standard, weekend, and seasonal implementations.
+- [ ] Confirm `PricingPolicySelector` precedence and peak-month configuration match the agreed requirements.
+- [ ] Confirm both booking estimate and return invoice use the selector.
+- [ ] Run `dotnet build .\WanderCar_DotNet\src\FlemanApi`.
+- [ ] Run `dotnet test .\WanderCar_DotNet\src\FlemanApi.Tests`.
+- [ ] Save raw outputs, including any failures.
+- [ ] Review unrelated working-tree changes before staging/committing.
+- [ ] Confirm no secrets or local environment files are staged.

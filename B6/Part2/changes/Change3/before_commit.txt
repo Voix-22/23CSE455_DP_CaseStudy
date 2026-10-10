@@ -1,0 +1,11 @@
+
+Baseline commit (verified from the supplied repository's Git metadata):
+dfc61ab8dd6f9bbb2301171457dc03946a249576
+
+Baseline source behavior:
+- `RentalRateCalculator.CalculateRentalAmount(CarType, int)` is a static method.
+- It packs whole months first (30-day units), then whole weeks (7-day units), then remaining days.
+- BookingService and StaffService directly call the static calculator for rental amounts.
+- No `IPricingPolicy`, `WeekendPricingPolicy`, `SeasonalPricingPolicy`, or `PricingPolicySelector` exists at the baseline commit.
+
+Note: the supplied ZIP's working tree has many modified files beyond CH02. The baseline reference above is the repository commit, not a claim that all working-tree changes belong to this experiment.

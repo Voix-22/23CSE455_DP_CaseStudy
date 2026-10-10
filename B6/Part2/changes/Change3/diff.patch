@@ -1,0 +1,4494 @@
+diff --git a/WanderCar_DotNet/src/FlemanApi.Tests/Services/BookingServiceTests.cs b/WanderCar_DotNet/src/FlemanApi.Tests/Services/BookingServiceTests.cs
+index b7bb873..8a3076e 100644
+--- a/WanderCar_DotNet/src/FlemanApi.Tests/Services/BookingServiceTests.cs
++++ b/WanderCar_DotNet/src/FlemanApi.Tests/Services/BookingServiceTests.cs
+@@ -1,392 +1,402 @@
+-using System.Net;
+-using FlemanApi.DTO;
+-using FlemanApi.Exceptions;
+-using FlemanApi.Models;
+-using FlemanApi.Repository;
+-using FlemanApi.Security;
+-using FlemanApi.Service;
+-using FlemanApi.Tests.TestHelpers;
+-using FluentAssertions;
+-using Microsoft.Extensions.Logging.Abstractions;
+-using Moq;
+-
+-namespace FlemanApi.Tests.Services;
+-
+-[TestFixture]
+-public class BookingServiceTests
+-{
+-    private List<BookingHeader> _bookings = null!;
+-    private List<BookingDetail> _bookingDetails = null!;
+-    private List<CarType> _carTypes = null!;
+-    private List<Customer> _customers = null!;
+-    private List<Hub> _hubs = null!;
+-    private List<Addon> _addons = null!;
+-    private List<Car> _cars = null!;
+-
+-    private Mock<IAvailabilityRepository> _availabilityMock = null!;
+-    private Mock<IVehicleService> _vehicleServiceMock = null!;
+-    private Mock<ICustomerService> _customerServiceMock = null!;
+-    private Mock<ILocationService> _locationServiceMock = null!;
+-    private Mock<IAddonService> _addonServiceMock = null!;
+-    private Mock<IEmailService> _emailServiceMock = null!;
+-    private Mock<IAuthenticatedUserAccessor> _currentUserMock = null!;
+-
+-    private BookingService _service = null!;
+-
+-    [SetUp]
+-    public void SetUp()
+-    {
+-        _bookings = new List<BookingHeader>();
+-        _bookingDetails = new List<BookingDetail>();
+-        _carTypes = new List<CarType> { new() { CarTypeId = 1, CarTypeName = "Sedan", DailyRate = 100.0 } };
+-        _customers = new List<Customer> { new() { CustomerId = 1, FullName = "Jane Doe", Email = "jane@example.com" } };
+-        _hubs = new List<Hub>
+-        {
+-            new() { HubId = 1, HubName = "Pickup Hub", CityId = 1, StateId = 1, Pincode = "400001", ContactNo = "111" },
+-            new() { HubId = 2, HubName = "Drop Hub", CityId = 1, StateId = 1, Pincode = "400002", ContactNo = "222" },
+-        };
+-        _addons = new List<Addon> { new() { AddonId = 1, AddonName = "GPS", DailyRate = 10.0 } };
+-        _cars = new List<Car> { new() { CarId = 1, CarTypeId = 1, HubId = 1, VehicleNumber = "MH01AA1111", Status = CarStatus.AVAILABLE } };
+-
+-        var bookingsRepo = MockRepositoryFactory.Create<BookingHeader, long>(_bookings, b => b.BookingId, (b, id) => b.BookingId = id);
+-        var bookingDetailsRepo = MockRepositoryFactory.Create<BookingDetail, long>(_bookingDetails, d => d.BookingDetailId, (d, id) => d.BookingDetailId = id);
+-        var carTypesRepo = MockRepositoryFactory.Create<CarType, long>(_carTypes, ct => ct.CarTypeId);
+-        var customersRepo = MockRepositoryFactory.Create<Customer, long>(_customers, c => c.CustomerId);
+-        var hubsRepo = MockRepositoryFactory.Create<Hub, long>(_hubs, h => h.HubId);
+-        var addonsRepo = MockRepositoryFactory.Create<Addon, long>(_addons, a => a.AddonId);
+-        var carsRepo = MockRepositoryFactory.Create<Car, long>(_cars, c => c.CarId);
+-
+-        _availabilityMock = new Mock<IAvailabilityRepository>();
+-        _availabilityMock.Setup(a => a.CountCapacityAsync(It.IsAny<long>(), It.IsAny<long>())).ReturnsAsync(5);
+-        _availabilityMock.Setup(a => a.CountOverlappingAsync(It.IsAny<long>(), It.IsAny<long>(), It.IsAny<DateTime>(), It.IsAny<DateTime>(), It.IsAny<long?>()))
+-            .ReturnsAsync(0);
+-
+-        _vehicleServiceMock = new Mock<IVehicleService>();
+-        _vehicleServiceMock.Setup(v => v.GetCarTypeByIdAsync(It.IsAny<long>()))
+-            .ReturnsAsync((long id) => new CarTypeDTO { CarTypeId = id, CarTypeName = "Sedan", DailyRate = 100.0 });
+-        _vehicleServiceMock.Setup(v => v.GetCarByIdAsync(It.IsAny<long>()))
+-            .ReturnsAsync((long id) => new CarDTO { CarId = id, VehicleNumber = "MH01AA1111" });
+-
+-        _customerServiceMock = new Mock<ICustomerService>();
+-        _customerServiceMock.Setup(c => c.GetCustomerByIdAsync(It.IsAny<long>()))
+-            .ReturnsAsync((long id) => new CustomerDTO { CustomerId = id, FullName = "Jane Doe", Email = "jane@example.com" });
+-
+-        _locationServiceMock = new Mock<ILocationService>();
+-        _locationServiceMock.Setup(l => l.GetHubByIdAsync(It.IsAny<long>()))
+-            .ReturnsAsync((long id) => new HubDTO { HubId = id, HubName = $"Hub {id}" });
+-
+-        _addonServiceMock = new Mock<IAddonService>();
+-        _addonServiceMock.Setup(a => a.GetAddonsAsync())
+-            .ReturnsAsync((IReadOnlyList<AddonDTO>)new List<AddonDTO> { new() { AddonId = 1, AddonName = "GPS", DailyRate = 10.0 } });
+-
+-        _emailServiceMock = new Mock<IEmailService>();
+-
+-        _currentUserMock = new Mock<IAuthenticatedUserAccessor>();
+-        _currentUserMock.SetupGet(c => c.IsAuthenticated).Returns(true);
+-        _currentUserMock.Setup(c => c.GetCurrentRole()).Returns("STAFF");
+-        _currentUserMock.Setup(c => c.GetCurrentUserId()).Returns(1);
+-
+-        _service = new BookingService(
+-            bookingsRepo.Object,
+-            bookingDetailsRepo.Object,
+-            carTypesRepo.Object,
+-            customersRepo.Object,
+-            hubsRepo.Object,
+-            addonsRepo.Object,
+-            carsRepo.Object,
+-            _availabilityMock.Object,
+-            _vehicleServiceMock.Object,
+-            _customerServiceMock.Object,
+-            _locationServiceMock.Object,
+-            _addonServiceMock.Object,
+-            _emailServiceMock.Object,
+-            _currentUserMock.Object,
+-            NullLogger<BookingService>.Instance);
+-    }
+-
+-    private static CreateBookingRequest MakeCreateRequest() => new()
+-    {
+-        CustomerId = 1,
+-        CarTypeId = 1,
+-        PickupHubId = 1,
+-        DropHubId = 2,
+-        PickupDatetime = new DateTime(2026, 8, 10),
+-        ReturnDatetime = new DateTime(2026, 8, 15),
+-    };
+-
+-    private async Task<BookingHeader> SeedActiveBookingAsync(long? carId = null)
+-    {
+-        var response = await _service.CreateBookingAsync(MakeCreateRequest());
+-        var header = _bookings.Single(b => b.ConfirmationNo == response.ConfirmationNo);
+-        if (carId is not null)
+-        {
+-            header.CarId = carId;
+-        }
+-        return header;
+-    }
+-
+-    // ---------- CreateBookingAsync ----------
+-
+-    [Test]
+-    public async Task CreateBookingAsync_HappyPath_CreatesConfirmedBookingWithEstimatedAmount()
+-    {
+-        var result = await _service.CreateBookingAsync(MakeCreateRequest());
+-
+-        result.BookingStatus.Should().Be("CONFIRMED");
+-        result.ConfirmationNo.Should().HaveLength(8);
+-        // 5 days * 100 daily rate + 0 addons (no addons requested)
+-        result.EstimatedAmount.Should().Be(500.0);
+-        _bookings.Should().ContainSingle();
+-    }
+-
+-    [Test]
+-    public async Task CreateBookingAsync_WithAddons_AddsAddonAmountToEstimate()
+-    {
+-        var request = MakeCreateRequest();
+-        request.Addons = new List<AddonLineRequest> { new() { AddonId = 1, Quantity = 2 } };
+-
+-        var result = await _service.CreateBookingAsync(request);
+-
+-        // 5 days * 100 daily + (10 rate * 2 qty * 5 days) addon = 500 + 100
+-        result.EstimatedAmount.Should().Be(600.0);
+-        _bookingDetails.Should().ContainSingle();
+-    }
+-
+-    [Test]
+-    public async Task CreateBookingAsync_CapacityExceeded_ThrowsConflict()
+-    {
+-        _availabilityMock.Setup(a => a.CountCapacityAsync(It.IsAny<long>(), It.IsAny<long>())).ReturnsAsync(1);
+-        _availabilityMock.Setup(a => a.CountOverlappingAsync(It.IsAny<long>(), It.IsAny<long>(), It.IsAny<DateTime>(), It.IsAny<DateTime>(), It.IsAny<long?>()))
+-            .ReturnsAsync(1);
+-
+-        var act = async () => await _service.CreateBookingAsync(MakeCreateRequest());
+-
+-        var ex = await act.Should().ThrowAsync<ApiException>();
+-        ex.Which.Status.Should().Be(HttpStatusCode.Conflict);
+-        _bookings.Should().BeEmpty();
+-    }
+-
+-    [Test]
+-    public async Task CreateBookingAsync_ReturnBeforePickup_ThrowsBadRequest()
+-    {
+-        var request = MakeCreateRequest();
+-        request.ReturnDatetime = request.PickupDatetime!.Value.AddDays(-1);
+-
+-        var act = async () => await _service.CreateBookingAsync(request);
+-
+-        var ex = await act.Should().ThrowAsync<ApiException>();
+-        ex.Which.Status.Should().Be(HttpStatusCode.BadRequest);
+-    }
+-
+-    [Test]
+-    public async Task CreateBookingAsync_UnknownCustomer_ThrowsResourceNotFound()
+-    {
+-        var request = MakeCreateRequest();
+-        request.CustomerId = 999;
+-
+-        var act = async () => await _service.CreateBookingAsync(request);
+-
+-        await act.Should().ThrowAsync<ResourceNotFoundException>();
+-    }
+-
+-    // ---------- ModifyBookingAsync ----------
+-
+-    [Test]
+-    public async Task ModifyBookingAsync_NullAddons_KeepsExistingAddonLines()
+-    {
+-        var createRequest = MakeCreateRequest();
+-        createRequest.Addons = new List<AddonLineRequest> { new() { AddonId = 1, Quantity = 1 } };
+-        var created = await _service.CreateBookingAsync(createRequest);
+-
+-        var modifyRequest = new ModifyBookingRequest { Remarks = "no addon change" };
+-        var result = await _service.ModifyBookingAsync(created.ConfirmationNo, modifyRequest);
+-
+-        _bookingDetails.Should().ContainSingle();
+-        result.EstimatedAmount.Should().Be(created.EstimatedAmount);
+-    }
+-
+-    [Test]
+-    public async Task ModifyBookingAsync_EmptyAddonsList_RemovesAllAddonLines()
+-    {
+-        var createRequest = MakeCreateRequest();
+-        createRequest.Addons = new List<AddonLineRequest> { new() { AddonId = 1, Quantity = 1 } };
+-        var created = await _service.CreateBookingAsync(createRequest);
+-
+-        var modifyRequest = new ModifyBookingRequest { Addons = new List<AddonLineRequest>() };
+-        var result = await _service.ModifyBookingAsync(created.ConfirmationNo, modifyRequest);
+-
+-        _bookingDetails.Should().BeEmpty();
+-        result.EstimatedAmount.Should().Be(500.0);
+-    }
+-
+-    [Test]
+-    public async Task ModifyBookingAsync_ChangePickupHubAfterCarAssigned_ThrowsConflict()
+-    {
+-        var header = await SeedActiveBookingAsync(carId: 1);
+-
+-        var act = async () => await _service.ModifyBookingAsync(header.ConfirmationNo, new ModifyBookingRequest { PickupHubId = 2 });
+-
+-        var ex = await act.Should().ThrowAsync<ApiException>();
+-        ex.Which.Status.Should().Be(HttpStatusCode.Conflict);
+-    }
+-
+-    [Test]
+-    public async Task ModifyBookingAsync_ChangePickupDatetimeAfterCarAssigned_ThrowsConflict()
+-    {
+-        var header = await SeedActiveBookingAsync(carId: 1);
+-
+-        var act = async () => await _service.ModifyBookingAsync(
+-            header.ConfirmationNo, new ModifyBookingRequest { PickupDatetime = header.PickupDatetime.AddDays(1) });
+-
+-        var ex = await act.Should().ThrowAsync<ApiException>();
+-        ex.Which.Status.Should().Be(HttpStatusCode.Conflict);
+-    }
+-
+-    [Test]
+-    public async Task ModifyBookingAsync_ChangeCategoryAfterCarAssigned_ThrowsConflict()
+-    {
+-        _carTypes.Add(new CarType { CarTypeId = 2, CarTypeName = "SUV", DailyRate = 150.0 });
+-        var header = await SeedActiveBookingAsync(carId: 1);
+-
+-        var act = async () => await _service.ModifyBookingAsync(header.ConfirmationNo, new ModifyBookingRequest { CarTypeId = 2 });
+-
+-        var ex = await act.Should().ThrowAsync<ApiException>();
+-        ex.Which.Status.Should().Be(HttpStatusCode.Conflict);
+-    }
+-
+-    [Test]
+-    public async Task ModifyBookingAsync_AddonsChangeAfterCarAssigned_ThrowsConflict()
+-    {
+-        var header = await SeedActiveBookingAsync(carId: 1);
+-
+-        var act = async () => await _service.ModifyBookingAsync(
+-            header.ConfirmationNo, new ModifyBookingRequest { Addons = new List<AddonLineRequest>() });
+-
+-        var ex = await act.Should().ThrowAsync<ApiException>();
+-        ex.Which.Status.Should().Be(HttpStatusCode.Conflict);
+-    }
+-
+-    [Test]
+-    public async Task ModifyBookingAsync_CategoryChangeBeforeCarAssigned_ReChecksCapacity()
+-    {
+-        _carTypes.Add(new CarType { CarTypeId = 2, CarTypeName = "SUV", DailyRate = 150.0 });
+-        var created = await _service.CreateBookingAsync(MakeCreateRequest());
+-
+-        var result = await _service.ModifyBookingAsync(created.ConfirmationNo, new ModifyBookingRequest { CarTypeId = 2 });
+-
+-        result.CarType!.CarTypeId.Should().Be(2);
+-        _availabilityMock.Verify(
+-            a => a.CountOverlappingAsync(1, 2, It.IsAny<DateTime>(), It.IsAny<DateTime>(), It.IsAny<long?>()),
+-            Times.AtLeastOnce);
+-    }
+-
+-    [Test]
+-    public async Task ModifyBookingAsync_CapacityRecheckFails_ThrowsConflict()
+-    {
+-        var created = await _service.CreateBookingAsync(MakeCreateRequest());
+-
+-        _availabilityMock.Setup(a => a.CountCapacityAsync(It.IsAny<long>(), It.IsAny<long>())).ReturnsAsync(1);
+-        _availabilityMock.Setup(a => a.CountOverlappingAsync(It.IsAny<long>(), It.IsAny<long>(), It.IsAny<DateTime>(), It.IsAny<DateTime>(), It.IsAny<long?>()))
+-            .ReturnsAsync(1);
+-
+-        var act = async () => await _service.ModifyBookingAsync(
+-            created.ConfirmationNo, new ModifyBookingRequest { PickupDatetime = new DateTime(2026, 8, 11) });
+-
+-        var ex = await act.Should().ThrowAsync<ApiException>();
+-        ex.Which.Status.Should().Be(HttpStatusCode.Conflict);
+-    }
+-
+-    [Test]
+-    public async Task ModifyBookingAsync_UnknownConfirmationNo_ThrowsResourceNotFound()
+-    {
+-        var act = async () => await _service.ModifyBookingAsync("NOPE0000", new ModifyBookingRequest());
+-
+-        await act.Should().ThrowAsync<ResourceNotFoundException>();
+-    }
+-
+-    // ---------- CancelBookingAsync ----------
+-
+-    [Test]
+-    public async Task CancelBookingAsync_CarAssigned_ReleasesCarBackToAvailable()
+-    {
+-        var header = await SeedActiveBookingAsync(carId: 1);
+-        _cars.Single().Status = CarStatus.BOOKED;
+-        _cars.Single().IsAvailable = false;
+-
+-        var result = await _service.CancelBookingAsync(header.ConfirmationNo);
+-
+-        result.BookingStatus.Should().Be("CANCELLED");
+-        _cars.Single().Status.Should().Be(CarStatus.AVAILABLE);
+-        _cars.Single().IsAvailable.Should().BeTrue();
+-    }
+-
+-    [Test]
+-    public async Task CancelBookingAsync_NoCarAssigned_DoesNotTouchAnyCar()
+-    {
+-        var created = await _service.CreateBookingAsync(MakeCreateRequest());
+-        var originalCarStatus = _cars.Single().Status;
+-
+-        var result = await _service.CancelBookingAsync(created.ConfirmationNo);
+-
+-        result.BookingStatus.Should().Be("CANCELLED");
+-        _cars.Single().Status.Should().Be(originalCarStatus);
+-    }
+-
+-    [Test]
+-    public async Task CancelBookingAsync_UnknownConfirmationNo_ThrowsResourceNotFound()
+-    {
+-        var act = async () => await _service.CancelBookingAsync("NOPE0000");
+-
+-        await act.Should().ThrowAsync<ResourceNotFoundException>();
+-    }
+-
+-    // ---------- Access control ----------
+-
+-    [Test]
+-    public async Task GetBookingByConfirmationAsync_CustomerAccessingSomeoneElsesBooking_ThrowsForbidden()
+-    {
+-        var created = await _service.CreateBookingAsync(MakeCreateRequest());
+-
+-        _currentUserMock.Setup(c => c.GetCurrentRole()).Returns("CUSTOMER");
+-        _currentUserMock.Setup(c => c.GetCurrentUserId()).Returns(999);
+-
+-        var act = async () => await _service.GetBookingByConfirmationAsync(created.ConfirmationNo);
+-
+-        var ex = await act.Should().ThrowAsync<ApiException>();
+-        ex.Which.Status.Should().Be(HttpStatusCode.Forbidden);
+-    }
+-
+-    [Test]
+-    public async Task GetBookingByConfirmationAsync_OwningCustomer_Succeeds()
+-    {
+-        var created = await _service.CreateBookingAsync(MakeCreateRequest());
+-
+-        _currentUserMock.Setup(c => c.GetCurrentRole()).Returns("CUSTOMER");
+-        _currentUserMock.Setup(c => c.GetCurrentUserId()).Returns(1);
+-
+-        var result = await _service.GetBookingByConfirmationAsync(created.ConfirmationNo);
+-
+-        result.ConfirmationNo.Should().Be(created.ConfirmationNo);
+-    }
+-
+-    // ---------- Read helpers ----------
+-
+-    [Test]
+-    public async Task GetLastBookingForCustomerAsync_NoBookings_ReturnsNull()
+-    {
+-        var result = await _service.GetLastBookingForCustomerAsync(1);
+-
+-        result.Should().BeNull();
+-    }
+-
+-    [Test]
+-    public async Task GetBookingsForCustomerAsync_ExcludesCancelledBookings()
+-    {
+-        var created = await _service.CreateBookingAsync(MakeCreateRequest());
+-        await _service.CancelBookingAsync(created.ConfirmationNo);
+-
+-        var result = await _service.GetBookingsForCustomerAsync(1);
+-
+-        result.Should().BeEmpty();
+-    }
+-}
++using System.Net;
++using FlemanApi.DTO;
++using FlemanApi.Exceptions;
++using FlemanApi.Models;
++using FlemanApi.Repository;
++using FlemanApi.Security;
++using FlemanApi.Service;
++using FlemanApi.Tests.TestHelpers;
++using FlemanApi.Util;
++using FluentAssertions;
++using Microsoft.Extensions.Logging.Abstractions;
++using Moq;
++
++namespace FlemanApi.Tests.Services;
++
++[TestFixture]
++public class BookingServiceTests
++{
++    private List<BookingHeader> _bookings = null!;
++    private List<BookingDetail> _bookingDetails = null!;
++    private List<CarType> _carTypes = null!;
++    private List<Customer> _customers = null!;
++    private List<Hub> _hubs = null!;
++    private List<Addon> _addons = null!;
++    private List<Car> _cars = null!;
++
++    private Mock<IAvailabilityRepository> _availabilityMock = null!;
++    private Mock<IVehicleService> _vehicleServiceMock = null!;
++    private Mock<ICustomerService> _customerServiceMock = null!;
++    private Mock<ILocationService> _locationServiceMock = null!;
++    private Mock<IAddonService> _addonServiceMock = null!;
++    private Mock<IEmailService> _emailServiceMock = null!;
++    private Mock<IAuthenticatedUserAccessor> _currentUserMock = null!;
++    private Mock<IPricingPolicySelector> _pricingPolicySelectorMock = null!;
++
++    private BookingService _service = null!;
++
++    [SetUp]
++    public void SetUp()
++    {
++        _bookings = new List<BookingHeader>();
++        _bookingDetails = new List<BookingDetail>();
++        _carTypes = new List<CarType> { new() { CarTypeId = 1, CarTypeName = "Sedan", DailyRate = 100.0 } };
++        _customers = new List<Customer> { new() { CustomerId = 1, FullName = "Jane Doe", Email = "jane@example.com" } };
++        _hubs = new List<Hub>
++        {
++            new() { HubId = 1, HubName = "Pickup Hub", CityId = 1, StateId = 1, Pincode = "400001", ContactNo = "111" },
++            new() { HubId = 2, HubName = "Drop Hub", CityId = 1, StateId = 1, Pincode = "400002", ContactNo = "222" },
++        };
++        _addons = new List<Addon> { new() { AddonId = 1, AddonName = "GPS", DailyRate = 10.0 } };
++        _cars = new List<Car> { new() { CarId = 1, CarTypeId = 1, HubId = 1, VehicleNumber = "MH01AA1111", Status = CarStatus.AVAILABLE } };
++
++        var bookingsRepo = MockRepositoryFactory.Create<BookingHeader, long>(_bookings, b => b.BookingId, (b, id) => b.BookingId = id);
++        var bookingDetailsRepo = MockRepositoryFactory.Create<BookingDetail, long>(_bookingDetails, d => d.BookingDetailId, (d, id) => d.BookingDetailId = id);
++        var carTypesRepo = MockRepositoryFactory.Create<CarType, long>(_carTypes, ct => ct.CarTypeId);
++        var customersRepo = MockRepositoryFactory.Create<Customer, long>(_customers, c => c.CustomerId);
++        var hubsRepo = MockRepositoryFactory.Create<Hub, long>(_hubs, h => h.HubId);
++        var addonsRepo = MockRepositoryFactory.Create<Addon, long>(_addons, a => a.AddonId);
++        var carsRepo = MockRepositoryFactory.Create<Car, long>(_cars, c => c.CarId);
++
++        _availabilityMock = new Mock<IAvailabilityRepository>();
++        _availabilityMock.Setup(a => a.CountCapacityAsync(It.IsAny<long>(), It.IsAny<long>())).ReturnsAsync(5);
++        _availabilityMock.Setup(a => a.CountOverlappingAsync(It.IsAny<long>(), It.IsAny<long>(), It.IsAny<DateTime>(), It.IsAny<DateTime>(), It.IsAny<long?>()))
++            .ReturnsAsync(0);
++
++        _vehicleServiceMock = new Mock<IVehicleService>();
++        _vehicleServiceMock.Setup(v => v.GetCarTypeByIdAsync(It.IsAny<long>()))
++            .ReturnsAsync((long id) => new CarTypeDTO { CarTypeId = id, CarTypeName = "Sedan", DailyRate = 100.0 });
++        _vehicleServiceMock.Setup(v => v.GetCarByIdAsync(It.IsAny<long>()))
++            .ReturnsAsync((long id) => new CarDTO { CarId = id, VehicleNumber = "MH01AA1111" });
++
++        _customerServiceMock = new Mock<ICustomerService>();
++        _customerServiceMock.Setup(c => c.GetCustomerByIdAsync(It.IsAny<long>()))
++            .ReturnsAsync((long id) => new CustomerDTO { CustomerId = id, FullName = "Jane Doe", Email = "jane@example.com" });
++
++        _locationServiceMock = new Mock<ILocationService>();
++        _locationServiceMock.Setup(l => l.GetHubByIdAsync(It.IsAny<long>()))
++            .ReturnsAsync((long id) => new HubDTO { HubId = id, HubName = $"Hub {id}" });
++
++        _addonServiceMock = new Mock<IAddonService>();
++        _addonServiceMock.Setup(a => a.GetAddonsAsync())
++            .ReturnsAsync((IReadOnlyList<AddonDTO>)new List<AddonDTO> { new() { AddonId = 1, AddonName = "GPS", DailyRate = 10.0 } });
++
++        _emailServiceMock = new Mock<IEmailService>();
++
++        _currentUserMock = new Mock<IAuthenticatedUserAccessor>();
++        _currentUserMock.SetupGet(c => c.IsAuthenticated).Returns(true);
++        _currentUserMock.Setup(c => c.GetCurrentRole()).Returns("STAFF");
++        _currentUserMock.Setup(c => c.GetCurrentUserId()).Returns(1);
++
++        _pricingPolicySelectorMock = new Mock<IPricingPolicySelector>();
++
++        _pricingPolicySelectorMock
++            .Setup(s => s.SelectPolicy(
++                It.IsAny<CarType>(),
++                It.IsAny<DateTime>(),
++                It.IsAny<DateTime>()))
++            .Returns(new StandardPricingPolicy());
++
++        _service = new BookingService(
++            bookingsRepo.Object,
++            bookingDetailsRepo.Object,
++            carTypesRepo.Object,
++            customersRepo.Object,
++            hubsRepo.Object,
++            addonsRepo.Object,
++            carsRepo.Object,
++            _availabilityMock.Object,
++            _vehicleServiceMock.Object,
++            _customerServiceMock.Object,
++            _locationServiceMock.Object,
++            _addonServiceMock.Object,
++            _emailServiceMock.Object,
++            _currentUserMock.Object,
++            NullLogger<BookingService>.Instance,
++            _pricingPolicySelectorMock.Object);
++    }
++
++    private static CreateBookingRequest MakeCreateRequest() => new()
++    {
++        CustomerId = 1,
++        CarTypeId = 1,
++        PickupHubId = 1,
++        DropHubId = 2,
++        PickupDatetime = new DateTime(2026, 8, 10),
++        ReturnDatetime = new DateTime(2026, 8, 15),
++    };
++
++    private async Task<BookingHeader> SeedActiveBookingAsync(long? carId = null)
++    {
++        var response = await _service.CreateBookingAsync(MakeCreateRequest());
++        var header = _bookings.Single(b => b.ConfirmationNo == response.ConfirmationNo);
++        if (carId is not null)
++        {
++            header.CarId = carId;
++        }
++        return header;
++    }
++
++    // ---------- CreateBookingAsync ----------
++
++    [Test]
++    public async Task CreateBookingAsync_HappyPath_CreatesConfirmedBookingWithEstimatedAmount()
++    {
++        var result = await _service.CreateBookingAsync(MakeCreateRequest());
++
++        result.BookingStatus.Should().Be("CONFIRMED");
++        result.ConfirmationNo.Should().HaveLength(8);
++        result.EstimatedAmount.Should().Be(500.0);
++        _bookings.Should().ContainSingle();
++    }
++
++    [Test]
++    public async Task CreateBookingAsync_WithAddons_AddsAddonAmountToEstimate()
++    {
++        var request = MakeCreateRequest();
++        request.Addons = new List<AddonLineRequest> { new() { AddonId = 1, Quantity = 2 } };
++
++        var result = await _service.CreateBookingAsync(request);
++
++        result.EstimatedAmount.Should().Be(600.0);
++        _bookingDetails.Should().ContainSingle();
++    }
++
++    [Test]
++    public async Task CreateBookingAsync_CapacityExceeded_ThrowsConflict()
++    {
++        _availabilityMock.Setup(a => a.CountCapacityAsync(It.IsAny<long>(), It.IsAny<long>())).ReturnsAsync(1);
++        _availabilityMock.Setup(a => a.CountOverlappingAsync(It.IsAny<long>(), It.IsAny<long>(), It.IsAny<DateTime>(), It.IsAny<DateTime>(), It.IsAny<long?>()))
++            .ReturnsAsync(1);
++
++        var act = async () => await _service.CreateBookingAsync(MakeCreateRequest());
++
++        var ex = await act.Should().ThrowAsync<ApiException>();
++        ex.Which.Status.Should().Be(HttpStatusCode.Conflict);
++        _bookings.Should().BeEmpty();
++    }
++
++    [Test]
++    public async Task CreateBookingAsync_ReturnBeforePickup_ThrowsBadRequest()
++    {
++        var request = MakeCreateRequest();
++        request.ReturnDatetime = request.PickupDatetime!.Value.AddDays(-1);
++
++        var act = async () => await _service.CreateBookingAsync(request);
++
++        var ex = await act.Should().ThrowAsync<ApiException>();
++        ex.Which.Status.Should().Be(HttpStatusCode.BadRequest);
++    }
++
++    [Test]
++    public async Task CreateBookingAsync_UnknownCustomer_ThrowsResourceNotFound()
++    {
++        var request = MakeCreateRequest();
++        request.CustomerId = 999;
++
++        var act = async () => await _service.CreateBookingAsync(request);
++
++        await act.Should().ThrowAsync<ResourceNotFoundException>();
++    }
++
++    // ---------- ModifyBookingAsync ----------
++
++    [Test]
++    public async Task ModifyBookingAsync_NullAddons_KeepsExistingAddonLines()
++    {
++        var createRequest = MakeCreateRequest();
++        createRequest.Addons = new List<AddonLineRequest> { new() { AddonId = 1, Quantity = 1 } };
++        var created = await _service.CreateBookingAsync(createRequest);
++
++        var modifyRequest = new ModifyBookingRequest { Remarks = "no addon change" };
++        var result = await _service.ModifyBookingAsync(created.ConfirmationNo, modifyRequest);
++
++        _bookingDetails.Should().ContainSingle();
++        result.EstimatedAmount.Should().Be(created.EstimatedAmount);
++    }
++
++    [Test]
++    public async Task ModifyBookingAsync_EmptyAddonsList_RemovesAllAddonLines()
++    {
++        var createRequest = MakeCreateRequest();
++        createRequest.Addons = new List<AddonLineRequest> { new() { AddonId = 1, Quantity = 1 } };
++        var created = await _service.CreateBookingAsync(createRequest);
++
++        var modifyRequest = new ModifyBookingRequest { Addons = new List<AddonLineRequest>() };
++        var result = await _service.ModifyBookingAsync(created.ConfirmationNo, modifyRequest);
++
++        _bookingDetails.Should().BeEmpty();
++        result.EstimatedAmount.Should().Be(500.0);
++    }
++
++    [Test]
++    public async Task ModifyBookingAsync_ChangePickupHubAfterCarAssigned_ThrowsConflict()
++    {
++        var header = await SeedActiveBookingAsync(carId: 1);
++
++        var act = async () => await _service.ModifyBookingAsync(header.ConfirmationNo, new ModifyBookingRequest { PickupHubId = 2 });
++
++        var ex = await act.Should().ThrowAsync<ApiException>();
++        ex.Which.Status.Should().Be(HttpStatusCode.Conflict);
++    }
++
++    [Test]
++    public async Task ModifyBookingAsync_ChangePickupDatetimeAfterCarAssigned_ThrowsConflict()
++    {
++        var header = await SeedActiveBookingAsync(carId: 1);
++
++        var act = async () => await _service.ModifyBookingAsync(
++            header.ConfirmationNo, new ModifyBookingRequest { PickupDatetime = header.PickupDatetime.AddDays(1) });
++
++        var ex = await act.Should().ThrowAsync<ApiException>();
++        ex.Which.Status.Should().Be(HttpStatusCode.Conflict);
++    }
++
++    [Test]
++    public async Task ModifyBookingAsync_ChangeCategoryAfterCarAssigned_ThrowsConflict()
++    {
++        _carTypes.Add(new CarType { CarTypeId = 2, CarTypeName = "SUV", DailyRate = 150.0 });
++        var header = await SeedActiveBookingAsync(carId: 1);
++
++        var act = async () => await _service.ModifyBookingAsync(header.ConfirmationNo, new ModifyBookingRequest { CarTypeId = 2 });
++
++        var ex = await act.Should().ThrowAsync<ApiException>();
++        ex.Which.Status.Should().Be(HttpStatusCode.Conflict);
++    }
++
++    [Test]
++    public async Task ModifyBookingAsync_AddonsChangeAfterCarAssigned_ThrowsConflict()
++    {
++        var header = await SeedActiveBookingAsync(carId: 1);
++
++        var act = async () => await _service.ModifyBookingAsync(
++            header.ConfirmationNo, new ModifyBookingRequest { Addons = new List<AddonLineRequest>() });
++
++        var ex = await act.Should().ThrowAsync<ApiException>();
++        ex.Which.Status.Should().Be(HttpStatusCode.Conflict);
++    }
++
++    [Test]
++    public async Task ModifyBookingAsync_CategoryChangeBeforeCarAssigned_ReChecksCapacity()
++    {
++        _carTypes.Add(new CarType { CarTypeId = 2, CarTypeName = "SUV", DailyRate = 150.0 });
++        var created = await _service.CreateBookingAsync(MakeCreateRequest());
++
++        var result = await _service.ModifyBookingAsync(created.ConfirmationNo, new ModifyBookingRequest { CarTypeId = 2 });
++
++        result.CarType!.CarTypeId.Should().Be(2);
++        _availabilityMock.Verify(
++            a => a.CountOverlappingAsync(1, 2, It.IsAny<DateTime>(), It.IsAny<DateTime>(), It.IsAny<long?>()),
++            Times.AtLeastOnce);
++    }
++
++    [Test]
++    public async Task ModifyBookingAsync_CapacityRecheckFails_ThrowsConflict()
++    {
++        var created = await _service.CreateBookingAsync(MakeCreateRequest());
++
++        _availabilityMock.Setup(a => a.CountCapacityAsync(It.IsAny<long>(), It.IsAny<long>())).ReturnsAsync(1);
++        _availabilityMock.Setup(a => a.CountOverlappingAsync(It.IsAny<long>(), It.IsAny<long>(), It.IsAny<DateTime>(), It.IsAny<DateTime>(), It.IsAny<long?>()))
++            .ReturnsAsync(1);
++
++        var act = async () => await _service.ModifyBookingAsync(
++            created.ConfirmationNo, new ModifyBookingRequest { PickupDatetime = new DateTime(2026, 8, 11) });
++
++        var ex = await act.Should().ThrowAsync<ApiException>();
++        ex.Which.Status.Should().Be(HttpStatusCode.Conflict);
++    }
++
++    [Test]
++    public async Task ModifyBookingAsync_UnknownConfirmationNo_ThrowsResourceNotFound()
++    {
++        var act = async () => await _service.ModifyBookingAsync("NOPE0000", new ModifyBookingRequest());
++
++        await act.Should().ThrowAsync<ResourceNotFoundException>();
++    }
++
++    // ---------- CancelBookingAsync ----------
++
++    [Test]
++    public async Task CancelBookingAsync_CarAssigned_ReleasesCarBackToAvailable()
++    {
++        var header = await SeedActiveBookingAsync(carId: 1);
++        _cars.Single().Status = CarStatus.BOOKED;
++        _cars.Single().IsAvailable = false;
++
++        var result = await _service.CancelBookingAsync(header.ConfirmationNo);
++
++        result.BookingStatus.Should().Be("CANCELLED");
++        _cars.Single().Status.Should().Be(CarStatus.AVAILABLE);
++        _cars.Single().IsAvailable.Should().BeTrue();
++    }
++
++    [Test]
++    public async Task CancelBookingAsync_NoCarAssigned_DoesNotTouchAnyCar()
++    {
++        var created = await _service.CreateBookingAsync(MakeCreateRequest());
++        var originalCarStatus = _cars.Single().Status;
++
++        var result = await _service.CancelBookingAsync(created.ConfirmationNo);
++
++        result.BookingStatus.Should().Be("CANCELLED");
++        _cars.Single().Status.Should().Be(originalCarStatus);
++    }
++
++    [Test]
++    public async Task CancelBookingAsync_UnknownConfirmationNo_ThrowsResourceNotFound()
++    {
++        var act = async () => await _service.CancelBookingAsync("NOPE0000");
++
++        await act.Should().ThrowAsync<ResourceNotFoundException>();
++    }
++
++    // ---------- Access control ----------
++
++    [Test]
++    public async Task GetBookingByConfirmationAsync_CustomerAccessingSomeoneElsesBooking_ThrowsForbidden()
++    {
++        var created = await _service.CreateBookingAsync(MakeCreateRequest());
++
++        _currentUserMock.Setup(c => c.GetCurrentRole()).Returns("CUSTOMER");
++        _currentUserMock.Setup(c => c.GetCurrentUserId()).Returns(999);
++
++        var act = async () => await _service.GetBookingByConfirmationAsync(created.ConfirmationNo);
++
++        var ex = await act.Should().ThrowAsync<ApiException>();
++        ex.Which.Status.Should().Be(HttpStatusCode.Forbidden);
++    }
++
++    [Test]
++    public async Task GetBookingByConfirmationAsync_OwningCustomer_Succeeds()
++    {
++        var created = await _service.CreateBookingAsync(MakeCreateRequest());
++
++        _currentUserMock.Setup(c => c.GetCurrentRole()).Returns("CUSTOMER");
++        _currentUserMock.Setup(c => c.GetCurrentUserId()).Returns(1);
++
++        var result = await _service.GetBookingByConfirmationAsync(created.ConfirmationNo);
++
++        result.ConfirmationNo.Should().Be(created.ConfirmationNo);
++    }
++
++    // ---------- Read helpers ----------
++
++    [Test]
++    public async Task GetLastBookingForCustomerAsync_NoBookings_ReturnsNull()
++    {
++        var result = await _service.GetLastBookingForCustomerAsync(1);
++
++        result.Should().BeNull();
++    }
++
++    [Test]
++    public async Task GetBookingsForCustomerAsync_ExcludesCancelledBookings()
++    {
++        var created = await _service.CreateBookingAsync(MakeCreateRequest());
++        await _service.CancelBookingAsync(created.ConfirmationNo);
++
++        var result = await _service.GetBookingsForCustomerAsync(1);
++
++        result.Should().BeEmpty();
++    }
++}
+\ No newline at end of file
+diff --git a/WanderCar_DotNet/src/FlemanApi.Tests/Services/StaffServiceTests.cs b/WanderCar_DotNet/src/FlemanApi.Tests/Services/StaffServiceTests.cs
+index 73a8371..5a4922f 100644
+--- a/WanderCar_DotNet/src/FlemanApi.Tests/Services/StaffServiceTests.cs
++++ b/WanderCar_DotNet/src/FlemanApi.Tests/Services/StaffServiceTests.cs
+@@ -1,381 +1,418 @@
+-using System.Net;
+-using FlemanApi.DTO;
+-using FlemanApi.Exceptions;
+-using FlemanApi.Models;
+-using FlemanApi.Repository;
+-using FlemanApi.Service;
+-using FlemanApi.Tests.TestHelpers;
+-using FluentAssertions;
+-using Microsoft.Extensions.Logging.Abstractions;
+-using Moq;
+-
+-namespace FlemanApi.Tests.Services;
+-
+-[TestFixture]
+-public class StaffServiceTests
+-{
+-    private List<BookingHeader> _bookings = null!;
+-    private List<BookingDetail> _bookingDetails = null!;
+-    private List<Car> _cars = null!;
+-    private List<CarType> _carTypes = null!;
+-    private List<Customer> _customers = null!;
+-    private List<Addon> _addons = null!;
+-    private List<InvoiceHeader> _invoiceHeaders = null!;
+-    private List<InvoiceDetail> _invoiceDetails = null!;
+-
+-    private Mock<IAvailabilityRepository> _availabilityMock = null!;
+-    private Mock<IBookingService> _bookingServiceMock = null!;
+-    private Mock<IVehicleService> _vehicleServiceMock = null!;
+-    private Mock<IEmailService> _emailServiceMock = null!;
+-    private Mock<IInvoicePdfService> _invoicePdfServiceMock = null!;
+-
+-    private StaffService _service = null!;
+-
+-    [SetUp]
+-    public void SetUp()
+-    {
+-        _bookings = new List<BookingHeader>
+-        {
+-            new()
+-            {
+-                BookingId = 1,
+-                ConfirmationNo = "ABC12345",
+-                BookingDate = DateTime.Now,
+-                CustomerId = 1,
+-                CarTypeId = 1,
+-                PickupHubId = 1,
+-                DropHubId = 1,
+-                PickupDatetime = new DateTime(2026, 8, 1),
+-                ReturnDatetime = new DateTime(2026, 8, 5),
+-                BookingStatus = BookingStatus.CONFIRMED,
+-            },
+-        };
+-        _bookingDetails = new List<BookingDetail>();
+-        _cars = new List<Car>
+-        {
+-            new() { CarId = 1, CarTypeId = 1, HubId = 1, VehicleNumber = "MH01AA1111", Status = CarStatus.AVAILABLE, Odometer = 1000, FuelLevel = 100 },
+-        };
+-        _carTypes = new List<CarType> { new() { CarTypeId = 1, CarTypeName = "Sedan", DailyRate = 100.0 } };
+-        _customers = new List<Customer> { new() { CustomerId = 1, FullName = "Jane Doe", Email = "jane@example.com" } };
+-        _addons = new List<Addon> { new() { AddonId = 1, AddonName = "GPS", DailyRate = 10.0 } };
+-        _invoiceHeaders = new List<InvoiceHeader>();
+-        _invoiceDetails = new List<InvoiceDetail>();
+-
+-        var bookingsRepo = MockRepositoryFactory.Create<BookingHeader, long>(_bookings, b => b.BookingId);
+-        var bookingDetailsRepo = MockRepositoryFactory.Create<BookingDetail, long>(_bookingDetails, d => d.BookingDetailId, (d, id) => d.BookingDetailId = id);
+-        var carsRepo = MockRepositoryFactory.Create<Car, long>(_cars, c => c.CarId);
+-        var carTypesRepo = MockRepositoryFactory.Create<CarType, long>(_carTypes, ct => ct.CarTypeId);
+-        var customersRepo = MockRepositoryFactory.Create<Customer, long>(_customers, c => c.CustomerId);
+-        var addonsRepo = MockRepositoryFactory.Create<Addon, long>(_addons, a => a.AddonId);
+-        var invoiceHeadersRepo = MockRepositoryFactory.Create<InvoiceHeader, long>(_invoiceHeaders, i => i.InvoiceId, (i, id) => i.InvoiceId = id);
+-        var invoiceDetailsRepo = MockRepositoryFactory.Create<InvoiceDetail, long>(_invoiceDetails, d => d.InvoiceDetailId, (d, id) => d.InvoiceDetailId = id);
+-
+-        _availabilityMock = new Mock<IAvailabilityRepository>();
+-
+-        _bookingServiceMock = new Mock<IBookingService>();
+-        _bookingServiceMock.Setup(b => b.GetBookingByConfirmationAsync(It.IsAny<string>()))
+-            .ReturnsAsync((string confNo) => new BookingResponseDTO { ConfirmationNo = confNo });
+-
+-        _vehicleServiceMock = new Mock<IVehicleService>();
+-        _vehicleServiceMock.Setup(v => v.GetCarByIdAsync(It.IsAny<long>()))
+-            .ReturnsAsync((long id) => new CarDTO { CarId = id, VehicleNumber = "MH01AA1111" });
+-
+-        _emailServiceMock = new Mock<IEmailService>();
+-        _invoicePdfServiceMock = new Mock<IInvoicePdfService>();
+-        _invoicePdfServiceMock.Setup(p => p.GenerateInvoiceAsync(It.IsAny<long>())).ReturnsAsync(new byte[] { 1, 2, 3 });
+-
+-        _service = new StaffService(
+-            bookingsRepo.Object,
+-            bookingDetailsRepo.Object,
+-            carsRepo.Object,
+-            carTypesRepo.Object,
+-            customersRepo.Object,
+-            addonsRepo.Object,
+-            invoiceHeadersRepo.Object,
+-            invoiceDetailsRepo.Object,
+-            _availabilityMock.Object,
+-            _bookingServiceMock.Object,
+-            _vehicleServiceMock.Object,
+-            _emailServiceMock.Object,
+-            _invoicePdfServiceMock.Object,
+-            NullLogger<StaffService>.Instance);
+-    }
+-
+-    private BookingHeader Booking => _bookings.Single();
+-    private Car Car => _cars.Single();
+-
+-    // ---------- HandoverVehicleAsync ----------
+-
+-    [Test]
+-    public async Task HandoverVehicleAsync_HappyPath_AssignsCarAndMarksOngoing()
+-    {
+-        var result = await _service.HandoverVehicleAsync("ABC12345", new HandoverRequest { CarId = 1, FuelStatus = 100 });
+-
+-        Booking.CarId.Should().Be(1);
+-        Booking.BookingStatus.Should().Be(BookingStatus.ONGOING);
+-        Booking.HandoverFuelLevel.Should().Be(100);
+-        Car.Status.Should().Be(CarStatus.BOOKED);
+-        Car.IsAvailable.Should().BeFalse();
+-        result.Should().NotBeNull();
+-    }
+-
+-    [Test]
+-    public async Task HandoverVehicleAsync_AlreadyHandedOver_ThrowsConflict()
+-    {
+-        Booking.CarId = 1;
+-
+-        var act = async () => await _service.HandoverVehicleAsync("ABC12345", new HandoverRequest { CarId = 1 });
+-
+-        var ex = await act.Should().ThrowAsync<ApiException>();
+-        ex.Which.Status.Should().Be(HttpStatusCode.Conflict);
+-    }
+-
+-    [Test]
+-    public async Task HandoverVehicleAsync_NoCarIdInRequest_ThrowsBadRequest()
+-    {
+-        var act = async () => await _service.HandoverVehicleAsync("ABC12345", new HandoverRequest { CarId = null });
+-
+-        var ex = await act.Should().ThrowAsync<ApiException>();
+-        ex.Which.Status.Should().Be(HttpStatusCode.BadRequest);
+-    }
+-
+-    [Test]
+-    public async Task HandoverVehicleAsync_CarNotFound_ThrowsResourceNotFound()
+-    {
+-        var act = async () => await _service.HandoverVehicleAsync("ABC12345", new HandoverRequest { CarId = 999 });
+-
+-        await act.Should().ThrowAsync<ResourceNotFoundException>();
+-    }
+-
+-    [Test]
+-    public async Task HandoverVehicleAsync_WrongHub_ThrowsConflict()
+-    {
+-        Car.HubId = 2;
+-
+-        var act = async () => await _service.HandoverVehicleAsync("ABC12345", new HandoverRequest { CarId = 1 });
+-
+-        var ex = await act.Should().ThrowAsync<ApiException>();
+-        ex.Which.Status.Should().Be(HttpStatusCode.Conflict);
+-    }
+-
+-    [Test]
+-    public async Task HandoverVehicleAsync_WrongCategory_ThrowsConflict()
+-    {
+-        Car.CarTypeId = 2;
+-
+-        var act = async () => await _service.HandoverVehicleAsync("ABC12345", new HandoverRequest { CarId = 1 });
+-
+-        var ex = await act.Should().ThrowAsync<ApiException>();
+-        ex.Which.Status.Should().Be(HttpStatusCode.Conflict);
+-    }
+-
+-    [Test]
+-    public async Task HandoverVehicleAsync_CarNotAvailable_ThrowsConflict()
+-    {
+-        Car.Status = CarStatus.BOOKED;
+-
+-        var act = async () => await _service.HandoverVehicleAsync("ABC12345", new HandoverRequest { CarId = 1 });
+-
+-        var ex = await act.Should().ThrowAsync<ApiException>();
+-        ex.Which.Status.Should().Be(HttpStatusCode.Conflict);
+-    }
+-
+-    [Test]
+-    public async Task HandoverVehicleAsync_UnknownConfirmationNo_ThrowsResourceNotFound()
+-    {
+-        var act = async () => await _service.HandoverVehicleAsync("NOPE0000", new HandoverRequest { CarId = 1 });
+-
+-        await act.Should().ThrowAsync<ResourceNotFoundException>();
+-    }
+-
+-    // ---------- ProcessReturnAsync ----------
+-
+-    private void GivenHandedOverBooking(int handoverFuel = 100)
+-    {
+-        Booking.CarId = 1;
+-        Booking.ActualHandoverDatetime = new DateTime(2026, 8, 1);
+-        Booking.HandoverFuelLevel = handoverFuel;
+-        Car.Status = CarStatus.BOOKED;
+-        Car.IsAvailable = false;
+-    }
+-
+-    [Test]
+-    public async Task ProcessReturnAsync_NotHandedOverYet_ThrowsConflict()
+-    {
+-        var act = async () => await _service.ProcessReturnAsync("ABC12345", new ProcessReturnRequest());
+-
+-        var ex = await act.Should().ThrowAsync<ApiException>();
+-        ex.Which.Status.Should().Be(HttpStatusCode.Conflict);
+-    }
+-
+-    [Test]
+-    public async Task ProcessReturnAsync_FuelReturnedLowerThanHandover_ChargesFuelShortfall()
+-    {
+-        GivenHandedOverBooking(handoverFuel: 100);
+-
+-        var result = await _service.ProcessReturnAsync("ABC12345", new ProcessReturnRequest { FuelStatus = 50 });
+-
+-        // (100 - 50) / 25 = 2 quarters short * 2.0 per quarter = 4.0
+-        result.FuelCharge.Should().Be(4.0);
+-    }
+-
+-    [Test]
+-    public async Task ProcessReturnAsync_FuelReturnedEqualToHandover_NoFuelCharge()
+-    {
+-        GivenHandedOverBooking(handoverFuel: 100);
+-
+-        var result = await _service.ProcessReturnAsync("ABC12345", new ProcessReturnRequest { FuelStatus = 100 });
+-
+-        result.FuelCharge.Should().Be(0.0);
+-    }
+-
+-    [Test]
+-    public async Task ProcessReturnAsync_FuelReturnedHigherThanHandover_NoCreditNoCharge()
+-    {
+-        GivenHandedOverBooking(handoverFuel: 50);
+-
+-        var result = await _service.ProcessReturnAsync("ABC12345", new ProcessReturnRequest { FuelStatus = 100 });
+-
+-        result.FuelCharge.Should().Be(0.0);
+-    }
+-
+-    [Test]
+-    public async Task ProcessReturnAsync_PartialQuarterShortfall_RoundsDownToWholeQuarters()
+-    {
+-        GivenHandedOverBooking(handoverFuel: 100);
+-
+-        // 100 - 75 = 25 -> exactly 1 quarter short
+-        var result = await _service.ProcessReturnAsync("ABC12345", new ProcessReturnRequest { FuelStatus = 75 });
+-
+-        result.FuelCharge.Should().Be(2.0);
+-    }
+-
+-    [Test]
+-    public async Task ProcessReturnAsync_PaymentTypeGiven_PaymentStatusIsPaid()
+-    {
+-        GivenHandedOverBooking();
+-
+-        var result = await _service.ProcessReturnAsync("ABC12345", new ProcessReturnRequest { PaymentType = PaymentType.CASH });
+-
+-        result.PaymentStatus.Should().Be("PAID");
+-    }
+-
+-    [Test]
+-    public async Task ProcessReturnAsync_NoPaymentType_PaymentStatusIsPending()
+-    {
+-        GivenHandedOverBooking();
+-
+-        var result = await _service.ProcessReturnAsync("ABC12345", new ProcessReturnRequest { PaymentType = null });
+-
+-        result.PaymentStatus.Should().Be("PENDING");
+-    }
+-
+-    [Test]
+-    public async Task ProcessReturnAsync_ReleasesCarBackToAvailable()
+-    {
+-        GivenHandedOverBooking();
+-
+-        await _service.ProcessReturnAsync("ABC12345", new ProcessReturnRequest());
+-
+-        Car.Status.Should().Be(CarStatus.AVAILABLE);
+-        Car.IsAvailable.Should().BeTrue();
+-    }
+-
+-    [Test]
+-    public async Task ProcessReturnAsync_ExtraMiles_IncreasesOdometer()
+-    {
+-        GivenHandedOverBooking();
+-        Car.Odometer = 1000;
+-
+-        await _service.ProcessReturnAsync("ABC12345", new ProcessReturnRequest { ExtraMiles = 50 });
+-
+-        Car.Odometer.Should().Be(1050);
+-    }
+-
+-    [Test]
+-    public async Task ProcessReturnAsync_NoExtraMiles_OdometerUnchanged()
+-    {
+-        GivenHandedOverBooking();
+-        Car.Odometer = 1000;
+-
+-        await _service.ProcessReturnAsync("ABC12345", new ProcessReturnRequest { ExtraMiles = null });
+-
+-        Car.Odometer.Should().Be(1000);
+-    }
+-
+-    [Test]
+-    public async Task ProcessReturnAsync_MarksBookingCompleted()
+-    {
+-        GivenHandedOverBooking();
+-
+-        await _service.ProcessReturnAsync("ABC12345", new ProcessReturnRequest());
+-
+-        Booking.BookingStatus.Should().Be(BookingStatus.COMPLETED);
+-    }
+-
+-    [Test]
+-    public async Task ProcessReturnAsync_CreatesInvoiceHeaderAndDetails()
+-    {
+-        GivenHandedOverBooking();
+-        _bookingDetails.Add(new BookingDetail { BookingDetailId = 1, BookingId = 1, AddonId = 1, AddonRate = 10.0, Quantity = 1, Subtotal = 40.0 });
+-
+-        var result = await _service.ProcessReturnAsync("ABC12345", new ProcessReturnRequest());
+-
+-        _invoiceHeaders.Should().ContainSingle();
+-        _invoiceDetails.Should().ContainSingle(d => d.AddonName == "GPS");
+-        result.AddonAmount.Should().Be(40.0);
+-    }
+-
+-    [Test]
+-    public async Task ProcessReturnAsync_EmailSendThrows_StillReturnsInvoice()
+-    {
+-        GivenHandedOverBooking();
+-        _emailServiceMock.Setup(e => e.SendBookingInvoiceAsync(
+-                It.IsAny<string>(), It.IsAny<string>(), It.IsAny<BookingResponseDTO>(), It.IsAny<InvoiceResponseDTO>(), It.IsAny<byte[]>()))
+-            .ThrowsAsync(new InvalidOperationException("smtp down"));
+-
+-        var result = await _service.ProcessReturnAsync("ABC12345", new ProcessReturnRequest());
+-
+-        result.Should().NotBeNull();
+-    }
+-
+-    [Test]
+-    public async Task ProcessReturnAsync_UnknownConfirmationNo_ThrowsResourceNotFound()
+-    {
+-        var act = async () => await _service.ProcessReturnAsync("NOPE0000", new ProcessReturnRequest());
+-
+-        await act.Should().ThrowAsync<ResourceNotFoundException>();
+-    }
+-
+-    // ---------- GetAvailableCarsForHandoverAsync ----------
+-
+-    [Test]
+-    public async Task GetAvailableCarsForHandoverAsync_FiltersByHubAndCategoryAndAvailability()
+-    {
+-        _cars.Add(new Car { CarId = 2, CarTypeId = 1, HubId = 1, VehicleNumber = "MH01AA2222", Status = CarStatus.BOOKED });
+-        _cars.Add(new Car { CarId = 3, CarTypeId = 2, HubId = 1, VehicleNumber = "MH01AA3333", Status = CarStatus.AVAILABLE });
+-
+-        var result = await _service.GetAvailableCarsForHandoverAsync("ABC12345");
+-
+-        result.Should().ContainSingle(c => c.CarId == 1);
+-    }
+-
+-    // ---------- GetDashboardAsync ----------
+-
+-    [Test]
+-    public async Task GetDashboardAsync_MapsCarTypeCountsToDashboardDto()
+-    {
+-        _availabilityMock.Setup(a => a.CountByCarTypeAsync(It.IsAny<long?>()))
+-            .ReturnsAsync((IReadOnlyList<CarTypeCountProjection>)new List<CarTypeCountProjection>
+-            {
+-                new(1, 5, 3, 1, 1),
+-            });
+-
+-        var result = await _service.GetDashboardAsync(null);
+-
+-        result.Should().ContainSingle();
+-        result[0].CarTypeName.Should().Be("Sedan");
+-        result[0].TotalCars.Should().Be(5);
+-        result[0].AvailableCars.Should().Be(3);
+-    }
+-}
++using System.Net;
++using FlemanApi.DTO;
++using FlemanApi.Exceptions;
++using FlemanApi.Models;
++using FlemanApi.Repository;
++using FlemanApi.Service;
++using FlemanApi.Tests.TestHelpers;
++using FlemanApi.Util;
++using FluentAssertions;
++using Microsoft.Extensions.Logging.Abstractions;
++using Moq;
++
++namespace FlemanApi.Tests.Services;
++
++[TestFixture]
++public class StaffServiceTests
++{
++    private List<BookingHeader> _bookings = null!;
++    private List<BookingDetail> _bookingDetails = null!;
++    private List<Car> _cars = null!;
++    private List<CarType> _carTypes = null!;
++    private List<Customer> _customers = null!;
++    private List<Addon> _addons = null!;
++    private List<InvoiceHeader> _invoiceHeaders = null!;
++    private List<InvoiceDetail> _invoiceDetails = null!;
++
++    private Mock<IAvailabilityRepository> _availabilityMock = null!;
++    private Mock<IBookingService> _bookingServiceMock = null!;
++    private Mock<IVehicleService> _vehicleServiceMock = null!;
++    private Mock<IEmailService> _emailServiceMock = null!;
++    private Mock<IInvoicePdfService> _invoicePdfServiceMock = null!;
++    private Mock<IPricingPolicySelector> _pricingPolicySelectorMock = null!;
++
++    // Fixed "now" — 2026-08-05 12:00. Handover is set to 2026-08-01 12:00
++    // by GivenHandedOverBooking, so elapsed time is exactly 4 days.
++    private static readonly DateTime FixedNow = new(2026, 8, 5, 12, 0, 0);
++    private FixedTimeProvider _timeProvider = null!;
++
++    private StaffService _service = null!;
++
++    // Minimal TimeProvider subclass that returns a caller-controlled
++    // instant. LocalTimeZone is UTC so GetLocalNow() == GetUtcNow() and the
++    // service's DateTime arithmetic stays straightforward.
++    private sealed class FixedTimeProvider : TimeProvider
++    {
++        private readonly DateTimeOffset _utcNow;
++
++        public FixedTimeProvider(DateTime utcNow)
++        {
++            _utcNow = new DateTimeOffset(DateTime.SpecifyKind(utcNow, DateTimeKind.Utc));
++        }
++
++        public override DateTimeOffset GetUtcNow() => _utcNow;
++        public override TimeZoneInfo LocalTimeZone => TimeZoneInfo.Utc;
++    }
++
++    [SetUp]
++    public void SetUp()
++    {
++        _bookings = new List<BookingHeader>
++        {
++            new()
++            {
++                BookingId = 1,
++                ConfirmationNo = "ABC12345",
++                BookingDate = DateTime.Now,
++                CustomerId = 1,
++                CarTypeId = 1,
++                PickupHubId = 1,
++                DropHubId = 1,
++                PickupDatetime = new DateTime(2026, 8, 1),
++                ReturnDatetime = new DateTime(2026, 8, 5),
++                BookingStatus = BookingStatus.CONFIRMED,
++            },
++        };
++        _bookingDetails = new List<BookingDetail>();
++        _cars = new List<Car>
++        {
++            new() { CarId = 1, CarTypeId = 1, HubId = 1, VehicleNumber = "MH01AA1111", Status = CarStatus.AVAILABLE, Odometer = 1000, FuelLevel = 100 },
++        };
++        _carTypes = new List<CarType> { new() { CarTypeId = 1, CarTypeName = "Sedan", DailyRate = 100.0 } };
++        _customers = new List<Customer> { new() { CustomerId = 1, FullName = "Jane Doe", Email = "jane@example.com" } };
++        _addons = new List<Addon> { new() { AddonId = 1, AddonName = "GPS", DailyRate = 10.0 } };
++        _invoiceHeaders = new List<InvoiceHeader>();
++        _invoiceDetails = new List<InvoiceDetail>();
++
++        var bookingsRepo = MockRepositoryFactory.Create<BookingHeader, long>(_bookings, b => b.BookingId);
++        var bookingDetailsRepo = MockRepositoryFactory.Create<BookingDetail, long>(_bookingDetails, d => d.BookingDetailId, (d, id) => d.BookingDetailId = id);
++        var carsRepo = MockRepositoryFactory.Create<Car, long>(_cars, c => c.CarId);
++        var carTypesRepo = MockRepositoryFactory.Create<CarType, long>(_carTypes, ct => ct.CarTypeId);
++        var customersRepo = MockRepositoryFactory.Create<Customer, long>(_customers, c => c.CustomerId);
++        var addonsRepo = MockRepositoryFactory.Create<Addon, long>(_addons, a => a.AddonId);
++        var invoiceHeadersRepo = MockRepositoryFactory.Create<InvoiceHeader, long>(_invoiceHeaders, i => i.InvoiceId, (i, id) => i.InvoiceId = id);
++        var invoiceDetailsRepo = MockRepositoryFactory.Create<InvoiceDetail, long>(_invoiceDetails, d => d.InvoiceDetailId, (d, id) => d.InvoiceDetailId = id);
++
++        _availabilityMock = new Mock<IAvailabilityRepository>();
++
++        _bookingServiceMock = new Mock<IBookingService>();
++        _bookingServiceMock.Setup(b => b.GetBookingByConfirmationAsync(It.IsAny<string>()))
++            .ReturnsAsync((string confNo) => new BookingResponseDTO { ConfirmationNo = confNo });
++
++        _vehicleServiceMock = new Mock<IVehicleService>();
++        _vehicleServiceMock.Setup(v => v.GetCarByIdAsync(It.IsAny<long>()))
++            .ReturnsAsync((long id) => new CarDTO { CarId = id, VehicleNumber = "MH01AA1111" });
++
++        _emailServiceMock = new Mock<IEmailService>();
++        _invoicePdfServiceMock = new Mock<IInvoicePdfService>();
++        _invoicePdfServiceMock.Setup(p => p.GenerateInvoiceAsync(It.IsAny<long>())).ReturnsAsync(new byte[] { 1, 2, 3 });
++
++        _pricingPolicySelectorMock = new Mock<IPricingPolicySelector>();
++        _pricingPolicySelectorMock
++            .Setup(s => s.SelectPolicy(
++                It.IsAny<CarType>(),
++                It.IsAny<DateTime>(),
++                It.IsAny<DateTime>()))
++            .Returns(new StandardPricingPolicy());
++
++        _timeProvider = new FixedTimeProvider(FixedNow);
++
++        _service = new StaffService(
++            bookingsRepo.Object,
++            bookingDetailsRepo.Object,
++            carsRepo.Object,
++            carTypesRepo.Object,
++            customersRepo.Object,
++            addonsRepo.Object,
++            invoiceHeadersRepo.Object,
++            invoiceDetailsRepo.Object,
++            _availabilityMock.Object,
++            _bookingServiceMock.Object,
++            _vehicleServiceMock.Object,
++            _emailServiceMock.Object,
++            _invoicePdfServiceMock.Object,
++            NullLogger<StaffService>.Instance,
++            _pricingPolicySelectorMock.Object,
++            _timeProvider);
++    }
++
++    private BookingHeader Booking => _bookings.Single();
++    private Car Car => _cars.Single();
++
++    // ---------- HandoverVehicleAsync ----------
++
++    [Test]
++    public async Task HandoverVehicleAsync_HappyPath_AssignsCarAndMarksOngoing()
++    {
++        var result = await _service.HandoverVehicleAsync("ABC12345", new HandoverRequest { CarId = 1, FuelStatus = 100 });
++
++        Booking.CarId.Should().Be(1);
++        Booking.BookingStatus.Should().Be(BookingStatus.ONGOING);
++        Booking.HandoverFuelLevel.Should().Be(100);
++        Car.Status.Should().Be(CarStatus.BOOKED);
++        Car.IsAvailable.Should().BeFalse();
++        result.Should().NotBeNull();
++    }
++
++    [Test]
++    public async Task HandoverVehicleAsync_AlreadyHandedOver_ThrowsConflict()
++    {
++        Booking.CarId = 1;
++
++        var act = async () => await _service.HandoverVehicleAsync("ABC12345", new HandoverRequest { CarId = 1 });
++
++        var ex = await act.Should().ThrowAsync<ApiException>();
++        ex.Which.Status.Should().Be(HttpStatusCode.Conflict);
++    }
++
++    [Test]
++    public async Task HandoverVehicleAsync_NoCarIdInRequest_ThrowsBadRequest()
++    {
++        var act = async () => await _service.HandoverVehicleAsync("ABC12345", new HandoverRequest { CarId = null });
++
++        var ex = await act.Should().ThrowAsync<ApiException>();
++        ex.Which.Status.Should().Be(HttpStatusCode.BadRequest);
++    }
++
++    [Test]
++    public async Task HandoverVehicleAsync_CarNotFound_ThrowsResourceNotFound()
++    {
++        var act = async () => await _service.HandoverVehicleAsync("ABC12345", new HandoverRequest { CarId = 999 });
++
++        await act.Should().ThrowAsync<ResourceNotFoundException>();
++    }
++
++    [Test]
++    public async Task HandoverVehicleAsync_WrongHub_ThrowsConflict()
++    {
++        Car.HubId = 2;
++
++        var act = async () => await _service.HandoverVehicleAsync("ABC12345", new HandoverRequest { CarId = 1 });
++
++        var ex = await act.Should().ThrowAsync<ApiException>();
++        ex.Which.Status.Should().Be(HttpStatusCode.Conflict);
++    }
++
++    [Test]
++    public async Task HandoverVehicleAsync_WrongCategory_ThrowsConflict()
++    {
++        Car.CarTypeId = 2;
++
++        var act = async () => await _service.HandoverVehicleAsync("ABC12345", new HandoverRequest { CarId = 1 });
++
++        var ex = await act.Should().ThrowAsync<ApiException>();
++        ex.Which.Status.Should().Be(HttpStatusCode.Conflict);
++    }
++
++    [Test]
++    public async Task HandoverVehicleAsync_CarNotAvailable_ThrowsConflict()
++    {
++        Car.Status = CarStatus.BOOKED;
++
++        var act = async () => await _service.HandoverVehicleAsync("ABC12345", new HandoverRequest { CarId = 1 });
++
++        var ex = await act.Should().ThrowAsync<ApiException>();
++        ex.Which.Status.Should().Be(HttpStatusCode.Conflict);
++    }
++
++    [Test]
++    public async Task HandoverVehicleAsync_UnknownConfirmationNo_ThrowsResourceNotFound()
++    {
++        var act = async () => await _service.HandoverVehicleAsync("NOPE0000", new HandoverRequest { CarId = 1 });
++
++        await act.Should().ThrowAsync<ResourceNotFoundException>();
++    }
++
++    // ---------- ProcessReturnAsync ----------
++
++    private void GivenHandedOverBooking(int handoverFuel = 100)
++    {
++        Booking.CarId = 1;
++        // Exactly 4 days before FixedNow (2026-08-05 12:00).
++        Booking.ActualHandoverDatetime = FixedNow.AddDays(-4);
++        Booking.HandoverFuelLevel = handoverFuel;
++        Car.Status = CarStatus.BOOKED;
++        Car.IsAvailable = false;
++    }
++
++    [Test]
++    public async Task ProcessReturnAsync_NotHandedOverYet_ThrowsConflict()
++    {
++        var act = async () => await _service.ProcessReturnAsync("ABC12345", new ProcessReturnRequest());
++
++        var ex = await act.Should().ThrowAsync<ApiException>();
++        ex.Which.Status.Should().Be(HttpStatusCode.Conflict);
++    }
++
++    [Test]
++    public async Task ProcessReturnAsync_FuelReturnedLowerThanHandover_ChargesFuelShortfall()
++    {
++        GivenHandedOverBooking(handoverFuel: 100);
++
++        var result = await _service.ProcessReturnAsync("ABC12345", new ProcessReturnRequest { FuelStatus = 50 });
++
++        // (100 - 50) / 25 = 2 quarters short * 2.0 per quarter = 4.0
++        result.FuelCharge.Should().Be(4.0);
++    }
++
++    [Test]
++    public async Task ProcessReturnAsync_FuelReturnedEqualToHandover_NoFuelCharge()
++    {
++        GivenHandedOverBooking(handoverFuel: 100);
++
++        var result = await _service.ProcessReturnAsync("ABC12345", new ProcessReturnRequest { FuelStatus = 100 });
++
++        result.FuelCharge.Should().Be(0.0);
++    }
++
++    [Test]
++    public async Task ProcessReturnAsync_FuelReturnedHigherThanHandover_NoCreditNoCharge()
++    {
++        GivenHandedOverBooking(handoverFuel: 50);
++
++        var result = await _service.ProcessReturnAsync("ABC12345", new ProcessReturnRequest { FuelStatus = 100 });
++
++        result.FuelCharge.Should().Be(0.0);
++    }
++
++    [Test]
++    public async Task ProcessReturnAsync_PartialQuarterShortfall_RoundsDownToWholeQuarters()
++    {
++        GivenHandedOverBooking(handoverFuel: 100);
++
++        // 100 - 75 = 25 -> exactly 1 quarter short
++        var result = await _service.ProcessReturnAsync("ABC12345", new ProcessReturnRequest { FuelStatus = 75 });
++
++        result.FuelCharge.Should().Be(2.0);
++    }
++
++    [Test]
++    public async Task ProcessReturnAsync_PaymentTypeGiven_PaymentStatusIsPaid()
++    {
++        GivenHandedOverBooking();
++
++        var result = await _service.ProcessReturnAsync("ABC12345", new ProcessReturnRequest { PaymentType = PaymentType.CASH });
++
++        result.PaymentStatus.Should().Be("PAID");
++    }
++
++    [Test]
++    public async Task ProcessReturnAsync_NoPaymentType_PaymentStatusIsPending()
++    {
++        GivenHandedOverBooking();
++
++        var result = await _service.ProcessReturnAsync("ABC12345", new ProcessReturnRequest { PaymentType = null });
++
++        result.PaymentStatus.Should().Be("PENDING");
++    }
++
++    [Test]
++    public async Task ProcessReturnAsync_ReleasesCarBackToAvailable()
++    {
++        GivenHandedOverBooking();
++
++        await _service.ProcessReturnAsync("ABC12345", new ProcessReturnRequest());
++
++        Car.Status.Should().Be(CarStatus.AVAILABLE);
++        Car.IsAvailable.Should().BeTrue();
++    }
++
++    [Test]
++    public async Task ProcessReturnAsync_ExtraMiles_IncreasesOdometer()
++    {
++        GivenHandedOverBooking();
++        Car.Odometer = 1000;
++
++        await _service.ProcessReturnAsync("ABC12345", new ProcessReturnRequest { ExtraMiles = 50 });
++
++        Car.Odometer.Should().Be(1050);
++    }
++
++    [Test]
++    public async Task ProcessReturnAsync_NoExtraMiles_OdometerUnchanged()
++    {
++        GivenHandedOverBooking();
++        Car.Odometer = 1000;
++
++        await _service.ProcessReturnAsync("ABC12345", new ProcessReturnRequest { ExtraMiles = null });
++
++        Car.Odometer.Should().Be(1000);
++    }
++
++    [Test]
++    public async Task ProcessReturnAsync_MarksBookingCompleted()
++    {
++        GivenHandedOverBooking();
++
++        await _service.ProcessReturnAsync("ABC12345", new ProcessReturnRequest());
++
++        Booking.BookingStatus.Should().Be(BookingStatus.COMPLETED);
++    }
++
++    [Test]
++    public async Task ProcessReturnAsync_CreatesInvoiceHeaderAndDetails()
++    {
++        GivenHandedOverBooking();
++        _bookingDetails.Add(new BookingDetail { BookingDetailId = 1, BookingId = 1, AddonId = 1, AddonRate = 10.0, Quantity = 1, Subtotal = 40.0 });
++
++        var result = await _service.ProcessReturnAsync("ABC12345", new ProcessReturnRequest());
++
++        _invoiceHeaders.Should().ContainSingle();
++        _invoiceDetails.Should().ContainSingle(d => d.AddonName == "GPS");
++        // 4 days (FixedNow - FixedNow.AddDays(-4)) × 10 rate × 1 qty = 40.0
++        result.AddonAmount.Should().Be(40.0);
++    }
++
++    [Test]
++    public async Task ProcessReturnAsync_EmailSendThrows_StillReturnsInvoice()
++    {
++        GivenHandedOverBooking();
++        _emailServiceMock.Setup(e => e.SendBookingInvoiceAsync(
++                It.IsAny<string>(), It.IsAny<string>(), It.IsAny<BookingResponseDTO>(), It.IsAny<InvoiceResponseDTO>(), It.IsAny<byte[]>()))
++            .ThrowsAsync(new InvalidOperationException("smtp down"));
++
++        var result = await _service.ProcessReturnAsync("ABC12345", new ProcessReturnRequest());
++
++        result.Should().NotBeNull();
++    }
++
++    [Test]
++    public async Task ProcessReturnAsync_UnknownConfirmationNo_ThrowsResourceNotFound()
++    {
++        var act = async () => await _service.ProcessReturnAsync("NOPE0000", new ProcessReturnRequest());
++
++        await act.Should().ThrowAsync<ResourceNotFoundException>();
++    }
++
++    // ---------- GetAvailableCarsForHandoverAsync ----------
++
++    [Test]
++    public async Task GetAvailableCarsForHandoverAsync_FiltersByHubAndCategoryAndAvailability()
++    {
++        _cars.Add(new Car { CarId = 2, CarTypeId = 1, HubId = 1, VehicleNumber = "MH01AA2222", Status = CarStatus.BOOKED });
++        _cars.Add(new Car { CarId = 3, CarTypeId = 2, HubId = 1, VehicleNumber = "MH01AA3333", Status = CarStatus.AVAILABLE });
++
++        var result = await _service.GetAvailableCarsForHandoverAsync("ABC12345");
++
++        result.Should().ContainSingle(c => c.CarId == 1);
++    }
++
++    // ---------- GetDashboardAsync ----------
++
++    [Test]
++    public async Task GetDashboardAsync_MapsCarTypeCountsToDashboardDto()
++    {
++        _availabilityMock.Setup(a => a.CountByCarTypeAsync(It.IsAny<long?>()))
++            .ReturnsAsync((IReadOnlyList<CarTypeCountProjection>)new List<CarTypeCountProjection>
++            {
++                new(1, 5, 3, 1, 1),
++            });
++
++        var result = await _service.GetDashboardAsync(null);
++
++        result.Should().ContainSingle();
++        result[0].CarTypeName.Should().Be("Sedan");
++        result[0].TotalCars.Should().Be(5);
++        result[0].AvailableCars.Should().Be(3);
++    }
++}
+\ No newline at end of file
+diff --git a/WanderCar_DotNet/src/FlemanApi.Tests/Util/RentalRateCalculatorTests.cs b/WanderCar_DotNet/src/FlemanApi.Tests/Util/RentalRateCalculatorTests.cs
+index 07a3928..0bdde46 100644
+--- a/WanderCar_DotNet/src/FlemanApi.Tests/Util/RentalRateCalculatorTests.cs
++++ b/WanderCar_DotNet/src/FlemanApi.Tests/Util/RentalRateCalculatorTests.cs
+@@ -1,99 +1,99 @@
+-using FlemanApi.Models;
+-using FlemanApi.Util;
+-using FluentAssertions;
+-
+-namespace FlemanApi.Tests.Util;
+-
+-[TestFixture]
+-public class RentalRateCalculatorTests
+-{
+-    private static CarType MakeCarType(double daily = 100.0, double? weekly = 600.0, double? monthly = 2000.0) =>
+-        new()
+-        {
+-            CarTypeId = 1,
+-            CarTypeName = "Sedan",
+-            DailyRate = daily,
+-            WeeklyRate = weekly,
+-            MonthlyRate = monthly,
+-        };
+-
+-    [Test]
+-    public void CalculateRentalAmount_FiveDays_UsesDailyRateOnly()
+-    {
+-        var carType = MakeCarType();
+-
+-        var amount = RentalRateCalculator.CalculateRentalAmount(carType, 5);
+-
+-        amount.Should().Be(5 * 100.0);
+-    }
+-
+-    [Test]
+-    public void CalculateRentalAmount_TenDays_PacksOneWeekPlusThreeDays()
+-    {
+-        var carType = MakeCarType();
+-
+-        var amount = RentalRateCalculator.CalculateRentalAmount(carType, 10);
+-
+-        amount.Should().Be(600.0 + 3 * 100.0);
+-    }
+-
+-    [Test]
+-    public void CalculateRentalAmount_ThirtyFiveDays_PacksOneMonthPlusFiveDays()
+-    {
+-        var carType = MakeCarType();
+-
+-        var amount = RentalRateCalculator.CalculateRentalAmount(carType, 35);
+-
+-        amount.Should().Be(2000.0 + 5 * 100.0);
+-    }
+-
+-    [Test]
+-    public void CalculateRentalAmount_SixtyDays_PacksTwoMonths()
+-    {
+-        var carType = MakeCarType();
+-
+-        var amount = RentalRateCalculator.CalculateRentalAmount(carType, 60);
+-
+-        amount.Should().Be(2 * 2000.0);
+-    }
+-
+-    [Test]
+-    public void CalculateRentalAmount_ZeroWeeklyRate_FallsThroughToDaily()
+-    {
+-        var carType = MakeCarType(weekly: 0.0, monthly: 0.0);
+-
+-        var amount = RentalRateCalculator.CalculateRentalAmount(carType, 10);
+-
+-        amount.Should().Be(10 * 100.0);
+-    }
+-
+-    [Test]
+-    public void CalculateRentalAmount_NullWeeklyAndMonthlyRate_FallsThroughToDaily()
+-    {
+-        var carType = MakeCarType(weekly: null, monthly: null);
+-
+-        var amount = RentalRateCalculator.CalculateRentalAmount(carType, 15);
+-
+-        amount.Should().Be(15 * 100.0);
+-    }
+-
+-    [Test]
+-    public void CalculateRentalAmount_ExactlySevenDays_UsesOneWeekOnly()
+-    {
+-        var carType = MakeCarType();
+-
+-        var amount = RentalRateCalculator.CalculateRentalAmount(carType, 7);
+-
+-        amount.Should().Be(600.0);
+-    }
+-
+-    [Test]
+-    public void CalculateRentalAmount_ExactlyThirtyDays_UsesOneMonthOnly()
+-    {
+-        var carType = MakeCarType();
+-
+-        var amount = RentalRateCalculator.CalculateRentalAmount(carType, 30);
+-
+-        amount.Should().Be(2000.0);
+-    }
+-}
++using FlemanApi.Models;
++using FlemanApi.Util;
++using FluentAssertions;
++
++namespace FlemanApi.Tests.Util;
++
++[TestFixture]
++public class RentalRateCalculatorTests
++{
++    private static CarType MakeCarType(double daily = 100.0, double? weekly = 600.0, double? monthly = 2000.0) =>
++        new()
++        {
++            CarTypeId = 1,
++            CarTypeName = "Sedan",
++            DailyRate = daily,
++            WeeklyRate = weekly,
++            MonthlyRate = monthly,
++        };
++
++    [Test]
++    public void CalculateRentalAmount_FiveDays_UsesDailyRateOnly()
++    {
++        var carType = MakeCarType();
++
++        var amount = RentalRateCalculator.CalculateRentalAmount(carType, 5);
++
++        amount.Should().Be(5 * 100.0);
++    }
++
++    [Test]
++    public void CalculateRentalAmount_TenDays_PacksOneWeekPlusThreeDays()
++    {
++        var carType = MakeCarType();
++
++        var amount = RentalRateCalculator.CalculateRentalAmount(carType, 10);
++
++        amount.Should().Be(600.0 + 3 * 100.0);
++    }
++
++    [Test]
++    public void CalculateRentalAmount_ThirtyFiveDays_PacksOneMonthPlusFiveDays()
++    {
++        var carType = MakeCarType();
++
++        var amount = RentalRateCalculator.CalculateRentalAmount(carType, 35);
++
++        amount.Should().Be(2000.0 + 5 * 100.0);
++    }
++
++    [Test]
++    public void CalculateRentalAmount_SixtyDays_PacksTwoMonths()
++    {
++        var carType = MakeCarType();
++
++        var amount = RentalRateCalculator.CalculateRentalAmount(carType, 60);
++
++        amount.Should().Be(2 * 2000.0);
++    }
++
++    [Test]
++    public void CalculateRentalAmount_ZeroWeeklyRate_FallsThroughToDaily()
++    {
++        var carType = MakeCarType(weekly: 0.0, monthly: 0.0);
++
++        var amount = RentalRateCalculator.CalculateRentalAmount(carType, 10);
++
++        amount.Should().Be(10 * 100.0);
++    }
++
++    [Test]
++    public void CalculateRentalAmount_NullWeeklyAndMonthlyRate_FallsThroughToDaily()
++    {
++        var carType = MakeCarType(weekly: null, monthly: null);
++
++        var amount = RentalRateCalculator.CalculateRentalAmount(carType, 15);
++
++        amount.Should().Be(15 * 100.0);
++    }
++
++    [Test]
++    public void CalculateRentalAmount_ExactlySevenDays_UsesOneWeekOnly()
++    {
++        var carType = MakeCarType();
++
++        var amount = RentalRateCalculator.CalculateRentalAmount(carType, 7);
++
++        amount.Should().Be(600.0);
++    }
++
++    [Test]
++    public void CalculateRentalAmount_ExactlyThirtyDays_UsesOneMonthOnly()
++    {
++        var carType = MakeCarType();
++
++        var amount = RentalRateCalculator.CalculateRentalAmount(carType, 30);
++
++        amount.Should().Be(2000.0);
++    }
++}
+diff --git a/WanderCar_DotNet/src/FlemanApi/Program.cs b/WanderCar_DotNet/src/FlemanApi/Program.cs
+index ec2283e..e5fdcce 100644
+--- a/WanderCar_DotNet/src/FlemanApi/Program.cs
++++ b/WanderCar_DotNet/src/FlemanApi/Program.cs
+@@ -1,237 +1,249 @@
+-using System.Reflection;
+-using System.Text;
+-using FlemanApi.Data;
+-using FlemanApi.Middleware;
+-using FlemanApi.Security;
+-using FlemanApi.Service;
+-using FluentValidation;
+-using FluentValidation.AspNetCore;
+-using Microsoft.AspNetCore.Authentication.Google;
+-using Microsoft.AspNetCore.Authentication.JwtBearer;
+-using Microsoft.AspNetCore.Mvc;
+-using Microsoft.EntityFrameworkCore;
+-using Microsoft.IdentityModel.Tokens;
+-using Microsoft.OpenApi.Models;
+-using QuestPDF.Infrastructure;
+-using Serilog;
+-
+-const string GoogleSignInScheme = "GoogleSignIn";
+-
+-var builder = WebApplication.CreateBuilder(args);
+-
+-// ---- Logging (requirement #1) ----------------------------------------
+-builder.Host.UseSerilog((context, services, config) => config
+-    .ReadFrom.Configuration(context.Configuration)
+-    .Enrich.FromLogContext()
+-    .WriteTo.Console()
+-    .WriteTo.File("logs/fleman-dotnet-.log", rollingInterval: RollingInterval.Day));
+-
+-// ---- MVC / validation ---------------------------------------------------
+-builder.Services.AddHttpContextAccessor();
+-builder.Services
+-    .AddControllers()
+-    .AddJsonOptions(o =>
+-    {
+-        o.JsonSerializerOptions.PropertyNamingPolicy = System.Text.Json.JsonNamingPolicy.CamelCase;
+-        // Enums as their plain string name (e.g. "CASH"), matching Java's
+-        // Jackson default for @Enumerated(STRING) fields — without this,
+-        // System.Text.Json serializes enums as raw numbers.
+-        o.JsonSerializerOptions.Converters.Add(new System.Text.Json.Serialization.JsonStringEnumConverter());
+-    });
+-
+-builder.Services.AddValidatorsFromAssembly(Assembly.GetExecutingAssembly());
+-builder.Services.AddFluentValidationAutoValidation();
+-
+-// Matches Java's MethodArgumentNotValidException handler: one aggregated
+-// "field: message, field: message" string in the same { message, status,
+-// timestamp } envelope, instead of ASP.NET's default ProblemDetails shape.
+-builder.Services.Configure<ApiBehaviorOptions>(options =>
+-{
+-    options.InvalidModelStateResponseFactory = context =>
+-    {
+-        var message = string.Join(", ", context.ModelState
+-            .Where(kvp => kvp.Value?.Errors.Count > 0)
+-            .SelectMany(kvp => kvp.Value!.Errors.Select(e => $"{kvp.Key}: {e.ErrorMessage}")));
+-
+-        var body = new FlemanApi.Exceptions.ErrorResponse(message, StatusCodes.Status400BadRequest);
+-        return new BadRequestObjectResult(body);
+-    };
+-});
+-
+-// ---- EF Core / MySQL ------------------------------------------------------
+-var connectionString = builder.Configuration.GetConnectionString("Default")!;
+-builder.Services.AddDbContext<FlemanDbContext>(options =>
+-    options.UseMySql(connectionString, ServerVersion.AutoDetect(connectionString)));
+-
+-// ---- AutoMapper (requirement #10) -----------------------------------------
+-builder.Services.AddAutoMapper(cfg => { }, Assembly.GetExecutingAssembly());
+-
+-// ---- JWT auth (requirement #2) + Google OAuth2 -----------------------------
+-builder.Services.Configure<JwtSettings>(builder.Configuration.GetSection(JwtSettings.SectionName));
+-var jwtSettings = builder.Configuration.GetSection(JwtSettings.SectionName).Get<JwtSettings>()!;
+-
+-var authBuilder = builder.Services
+-    .AddAuthentication(options =>
+-    {
+-        options.DefaultAuthenticateScheme = JwtBearerDefaults.AuthenticationScheme;
+-        options.DefaultChallengeScheme = JwtBearerDefaults.AuthenticationScheme;
+-        options.DefaultScheme = JwtBearerDefaults.AuthenticationScheme;
+-    })
+-    .AddJwtBearer(options =>
+-    {
+-        options.MapInboundClaims = false;
+-        options.TokenValidationParameters = new TokenValidationParameters
+-        {
+-            ValidateIssuer = false,
+-            ValidateAudience = false,
+-            ValidateLifetime = true,
+-            ValidateIssuerSigningKey = true,
+-            IssuerSigningKey = new SymmetricSecurityKey(Encoding.UTF8.GetBytes(jwtSettings.Secret)),
+-            RoleClaimType = "role",
+-            NameClaimType = "sub",
+-        };
+-    });
+-
+-// Google OAuth2 is only registered when real credentials are configured —
+-// GoogleOptions.Validate() throws eagerly on every request's handler
+-// resolution otherwise (RemoteAuthenticationOptions requires a non-empty
+-// ClientId), which would take down every endpoint, not just the OAuth ones.
+-var googleSection = builder.Configuration.GetSection("GoogleOAuth");
+-var googleClientId = googleSection["ClientId"];
+-var googleClientSecret = googleSection["ClientSecret"];
+-var googleOAuthConfigured = !string.IsNullOrWhiteSpace(googleClientId) && !string.IsNullOrWhiteSpace(googleClientSecret);
+-
+-if (googleOAuthConfigured)
+-{
+-    authBuilder
+-        .AddCookie(GoogleSignInScheme) // transient cookie for the OAuth handshake only — no session auth is used afterwards
+-        .AddGoogle(options =>
+-        {
+-            options.ClientId = googleClientId!;
+-            options.ClientSecret = googleClientSecret!;
+-            options.SignInScheme = GoogleSignInScheme;
+-            options.CallbackPath = "/signin-google";
+-            options.Scope.Add("email");
+-            options.Scope.Add("profile");
+-            // "email_verified" isn't mapped to a claim by the handler by
+-            // default — pull it straight off the raw user-info payload to
+-            // mirror CustomOAuth2UserService's emailVerified assignment.
+-            options.Events.OnCreatingTicket = context =>
+-            {
+-                if (context.User.TryGetProperty("email_verified", out var verifiedProp))
+-                {
+-                    context.Identity!.AddClaim(new System.Security.Claims.Claim("email_verified", verifiedProp.ToString()));
+-                }
+-                return Task.CompletedTask;
+-            };
+-            // Forces Google's account chooser every time, mirroring
+-            // CustomAuthorizationRequestResolver's prompt=select_account.
+-            options.Events.OnRedirectToAuthorizationEndpoint = context =>
+-            {
+-                context.Response.Redirect(context.RedirectUri + "&prompt=select_account");
+-                return Task.CompletedTask;
+-            };
+-        });
+-}
+-
+-builder.Services.AddAuthorization();
+-
+-// ---- CORS (dev-time, mirrors CorsConfig.java) ------------------------------
+-var allowedOrigin = builder.Configuration["Cors:AllowedOrigin"] ?? "http://localhost:5173";
+-builder.Services.AddCors(options =>
+-{
+-    options.AddDefaultPolicy(policy => policy
+-        .WithOrigins(allowedOrigin)
+-        .WithMethods("GET", "POST", "PUT", "DELETE")
+-        .AllowAnyHeader());
+-});
+-
+-// ---- Security helpers -------------------------------------------------
+-builder.Services.AddScoped<IJwtTokenService, JwtTokenService>();
+-builder.Services.AddScoped<IAuthenticatedUserAccessor, AuthenticatedUserAccessor>();
+-
+-// ---- Swagger with JWT bearer support ---------------------------------
+-builder.Services.AddEndpointsApiExplorer();
+-builder.Services.AddSwaggerGen(c =>
+-{
+-    c.SwaggerDoc("v1", new OpenApiInfo { Title = "Fleman API (.NET)", Version = "v1" });
+-    var jwtScheme = new OpenApiSecurityScheme
+-    {
+-        Scheme = "bearer",
+-        BearerFormat = "JWT",
+-        Name = "Authorization",
+-        In = ParameterLocation.Header,
+-        Type = SecuritySchemeType.Http,
+-        Description = "Enter a JWT issued by /api/auth/login, /register or /staff-login",
+-        Reference = new OpenApiReference { Type = ReferenceType.SecurityScheme, Id = "Bearer" }
+-    };
+-    c.AddSecurityDefinition("Bearer", jwtScheme);
+-    c.AddSecurityRequirement(new OpenApiSecurityRequirement { { jwtScheme, Array.Empty<string>() } });
+-});
+-
+-// ---- QuestPDF (requirement: PDF invoice generation) ------------------
+-QuestPDF.Settings.License = LicenseType.Community;
+-
+-// ---- Repositories / services are registered per-domain below ----------
+-// (populated incrementally as each domain — Location, Airport, Addon,
+-// Customer/Auth, Vehicle, Booking, Staff/Invoice/Email/PDF, AI, legacy
+-// proxy — is implemented.)
+-builder.Services.AddScoped(typeof(FlemanApi.Repository.IGenericRepository<,>), typeof(FlemanApi.Repository.GenericRepository<,>));
+-
+-builder.Services.AddScoped<ILocationService, LocationService>();
+-builder.Services.AddScoped<IAirportService, AirportService>();
+-builder.Services.AddScoped<IAddonService, AddonService>();
+-builder.Services.AddScoped<ICustomerService, CustomerService>();
+-builder.Services.AddScoped<FlemanApi.Repository.IAvailabilityRepository, FlemanApi.Repository.AvailabilityRepository>();
+-builder.Services.AddScoped<IVehicleService, VehicleService>();
+-builder.Services.AddScoped<IBookingService, BookingService>();
+-
+-builder.Services.Configure<MailSettings>(builder.Configuration.GetSection(MailSettings.SectionName));
+-builder.Services.AddSingleton<IEmailBackgroundQueue, EmailBackgroundQueue>();
+-builder.Services.AddSingleton<IEmailSender, MailKitEmailSender>();
+-builder.Services.AddHostedService<EmailQueueHostedService>();
+-builder.Services.AddScoped<IEmailService, EmailService>();
+-// Calls the Java backend's invoice-PDF endpoint instead of generating
+-// locally with QuestPDF — see JavaInvoicePdfService. Swap back to
+-// InvoicePdfService to generate locally without the Java backend running.
+-builder.Services.AddScoped<IInvoicePdfService, JavaInvoicePdfService>();
+-builder.Services.AddScoped<IStaffService, StaffService>();
+-
+-builder.Services.Configure<AiSettings>(builder.Configuration.GetSection(AiSettings.SectionName));
+-builder.Services.AddScoped<IAiInsightsService, AiInsightsService>();
+-
+-// Requirement #11 — register a typed HttpClient for the legacy Java microservice.
+-builder.Services.AddHttpClient<IJavaMicroserviceClient, JavaMicroserviceClient>(client =>
+-{
+-    var javaBaseUrl = builder.Configuration["JavaMicroservice:BaseUrl"] ?? "http://localhost:8080";
+-    client.BaseAddress = new Uri(javaBaseUrl);
+-    client.Timeout = TimeSpan.FromSeconds(10);
+-});
+-
+-var app = builder.Build();
+-
+-// ---- HTTP pipeline ------------------------------------------------------
+-if (app.Environment.IsDevelopment())
+-{
+-    app.UseSwagger();
+-    app.UseSwaggerUI();
+-}
+-
+-app.UseMiddleware<ExceptionHandlingMiddleware>();
+-app.UseMiddleware<RequestLoggingMiddleware>();
+-
+-app.UseCors();
+-
+-app.UseAuthentication();
+-app.UseAuthorization();
+-
+-app.MapControllers();
+-
+-using (var scope = app.Services.CreateScope())
+-{
+-    var db = scope.ServiceProvider.GetRequiredService<FlemanDbContext>();
+-    db.Database.Migrate();
+-    await FlemanApi.Data.DataSeeder.SeedAsync(db);
+-}
+-
+-app.Run();
++using System.Reflection;
++using System.Text;
++using FlemanApi.Util;
++using FlemanApi.Data;
++using FlemanApi.Middleware;
++using FlemanApi.Security;
++using FlemanApi.Service;
++using FluentValidation;
++using FluentValidation.AspNetCore;
++using Microsoft.AspNetCore.Authentication.Google;
++using Microsoft.AspNetCore.Authentication.JwtBearer;
++using Microsoft.AspNetCore.Mvc;
++using Microsoft.EntityFrameworkCore;
++using Microsoft.IdentityModel.Tokens;
++using Microsoft.OpenApi.Models;
++using QuestPDF.Infrastructure;
++using Serilog;
++
++const string GoogleSignInScheme = "GoogleSignIn";
++
++var builder = WebApplication.CreateBuilder(args);
++
++// ---- Logging (requirement #1) ----------------------------------------
++builder.Host.UseSerilog((context, services, config) => config
++    .ReadFrom.Configuration(context.Configuration)
++    .Enrich.FromLogContext()
++    .WriteTo.Console()
++    .WriteTo.File("logs/fleman-dotnet-.log", rollingInterval: RollingInterval.Day));
++
++// ---- MVC / validation ---------------------------------------------------
++builder.Services.AddHttpContextAccessor();
++builder.Services
++    .AddControllers()
++    .AddJsonOptions(o =>
++    {
++        o.JsonSerializerOptions.PropertyNamingPolicy = System.Text.Json.JsonNamingPolicy.CamelCase;
++        // Enums as their plain string name (e.g. "CASH"), matching Java's
++        // Jackson default for @Enumerated(STRING) fields — without this,
++        // System.Text.Json serializes enums as raw numbers.
++        o.JsonSerializerOptions.Converters.Add(new System.Text.Json.Serialization.JsonStringEnumConverter());
++    });
++
++builder.Services.AddValidatorsFromAssembly(Assembly.GetExecutingAssembly());
++builder.Services.AddFluentValidationAutoValidation();
++
++// Matches Java's MethodArgumentNotValidException handler: one aggregated
++// "field: message, field: message" string in the same { message, status,
++// timestamp } envelope, instead of ASP.NET's default ProblemDetails shape.
++builder.Services.Configure<ApiBehaviorOptions>(options =>
++{
++    options.InvalidModelStateResponseFactory = context =>
++    {
++        var message = string.Join(", ", context.ModelState
++            .Where(kvp => kvp.Value?.Errors.Count > 0)
++            .SelectMany(kvp => kvp.Value!.Errors.Select(e => $"{kvp.Key}: {e.ErrorMessage}")));
++
++        var body = new FlemanApi.Exceptions.ErrorResponse(message, StatusCodes.Status400BadRequest);
++        return new BadRequestObjectResult(body);
++    };
++});
++
++// ---- EF Core / MySQL ------------------------------------------------------
++var connectionString = builder.Configuration.GetConnectionString("Default")!;
++builder.Services.AddDbContext<FlemanDbContext>(options =>
++    options.UseMySql(connectionString, ServerVersion.AutoDetect(connectionString)));
++
++// ---- AutoMapper (requirement #10) -----------------------------------------
++builder.Services.AddAutoMapper(cfg => { }, Assembly.GetExecutingAssembly());
++
++// ---- JWT auth (requirement #2) + Google OAuth2 -----------------------------
++builder.Services.Configure<JwtSettings>(builder.Configuration.GetSection(JwtSettings.SectionName));
++var jwtSettings = builder.Configuration.GetSection(JwtSettings.SectionName).Get<JwtSettings>()!;
++
++var authBuilder = builder.Services
++    .AddAuthentication(options =>
++    {
++        options.DefaultAuthenticateScheme = JwtBearerDefaults.AuthenticationScheme;
++        options.DefaultChallengeScheme = JwtBearerDefaults.AuthenticationScheme;
++        options.DefaultScheme = JwtBearerDefaults.AuthenticationScheme;
++    })
++    .AddJwtBearer(options =>
++    {
++        options.MapInboundClaims = false;
++        options.TokenValidationParameters = new TokenValidationParameters
++        {
++            ValidateIssuer = false,
++            ValidateAudience = false,
++            ValidateLifetime = true,
++            ValidateIssuerSigningKey = true,
++            IssuerSigningKey = new SymmetricSecurityKey(Encoding.UTF8.GetBytes(jwtSettings.Secret)),
++            RoleClaimType = "role",
++            NameClaimType = "sub",
++        };
++    });
++
++// Google OAuth2 is only registered when real credentials are configured —
++// GoogleOptions.Validate() throws eagerly on every request's handler
++// resolution otherwise (RemoteAuthenticationOptions requires a non-empty
++// ClientId), which would take down every endpoint, not just the OAuth ones.
++var googleSection = builder.Configuration.GetSection("GoogleOAuth");
++var googleClientId = googleSection["ClientId"];
++var googleClientSecret = googleSection["ClientSecret"];
++var googleOAuthConfigured = !string.IsNullOrWhiteSpace(googleClientId) && !string.IsNullOrWhiteSpace(googleClientSecret);
++
++if (googleOAuthConfigured)
++{
++    authBuilder
++        .AddCookie(GoogleSignInScheme) // transient cookie for the OAuth handshake only — no session auth is used afterwards
++        .AddGoogle(options =>
++        {
++            options.ClientId = googleClientId!;
++            options.ClientSecret = googleClientSecret!;
++            options.SignInScheme = GoogleSignInScheme;
++            options.CallbackPath = "/signin-google";
++            options.Scope.Add("email");
++            options.Scope.Add("profile");
++            // "email_verified" isn't mapped to a claim by the handler by
++            // default — pull it straight off the raw user-info payload to
++            // mirror CustomOAuth2UserService's emailVerified assignment.
++            options.Events.OnCreatingTicket = context =>
++            {
++                if (context.User.TryGetProperty("email_verified", out var verifiedProp))
++                {
++                    context.Identity!.AddClaim(new System.Security.Claims.Claim("email_verified", verifiedProp.ToString()));
++                }
++                return Task.CompletedTask;
++            };
++            // Forces Google's account chooser every time, mirroring
++            // CustomAuthorizationRequestResolver's prompt=select_account.
++            options.Events.OnRedirectToAuthorizationEndpoint = context =>
++            {
++                context.Response.Redirect(context.RedirectUri + "&prompt=select_account");
++                return Task.CompletedTask;
++            };
++        });
++}
++
++builder.Services.AddAuthorization();
++
++// ---- CORS (dev-time, mirrors CorsConfig.java) ------------------------------
++var allowedOrigin = builder.Configuration["Cors:AllowedOrigin"] ?? "http://localhost:5173";
++builder.Services.AddCors(options =>
++{
++    options.AddDefaultPolicy(policy => policy
++        .WithOrigins(allowedOrigin)
++        .WithMethods("GET", "POST", "PUT", "DELETE")
++        .AllowAnyHeader());
++});
++
++// ---- Security helpers -------------------------------------------------
++builder.Services.AddScoped<IJwtTokenService, JwtTokenService>();
++builder.Services.AddScoped<IAuthenticatedUserAccessor, AuthenticatedUserAccessor>();
++// ---- Clock abstraction (testable time) --------------------------------
++builder.Services.AddSingleton(TimeProvider.System);
++
++// ---- Swagger with JWT bearer support ---------------------------------
++builder.Services.AddEndpointsApiExplorer();
++builder.Services.AddSwaggerGen(c =>
++{
++    c.SwaggerDoc("v1", new OpenApiInfo { Title = "Fleman API (.NET)", Version = "v1" });
++    var jwtScheme = new OpenApiSecurityScheme
++    {
++        Scheme = "bearer",
++        BearerFormat = "JWT",
++        Name = "Authorization",
++        In = ParameterLocation.Header,
++        Type = SecuritySchemeType.Http,
++        Description = "Enter a JWT issued by /api/auth/login, /register or /staff-login",
++        Reference = new OpenApiReference { Type = ReferenceType.SecurityScheme, Id = "Bearer" }
++    };
++    c.AddSecurityDefinition("Bearer", jwtScheme);
++    c.AddSecurityRequirement(new OpenApiSecurityRequirement { { jwtScheme, Array.Empty<string>() } });
++});
++
++// ---- QuestPDF (requirement: PDF invoice generation) ------------------
++QuestPDF.Settings.License = LicenseType.Community;
++
++// ---- Repositories / services are registered per-domain below ----------
++// (populated incrementally as each domain — Location, Airport, Addon,
++// Customer/Auth, Vehicle, Booking, Staff/Invoice/Email/PDF, AI, legacy
++// proxy — is implemented.)
++builder.Services.AddScoped(typeof(FlemanApi.Repository.IGenericRepository<,>), typeof(FlemanApi.Repository.GenericRepository<,>));
++
++builder.Services.AddScoped<ILocationService, LocationService>();
++builder.Services.AddScoped<IAirportService, AirportService>();
++builder.Services.AddScoped<IAddonService, AddonService>();
++builder.Services.AddScoped<ICustomerService, CustomerService>();
++builder.Services.AddScoped<FlemanApi.Repository.IAvailabilityRepository, FlemanApi.Repository.AvailabilityRepository>();
++builder.Services.AddScoped<IVehicleService, VehicleService>();
++builder.Services.AddScoped<IBookingService, BookingService>();
++
++builder.Services.Configure<MailSettings>(builder.Configuration.GetSection(MailSettings.SectionName));
++builder.Services.AddSingleton<IEmailBackgroundQueue, EmailBackgroundQueue>();
++builder.Services.AddSingleton<IEmailSender, MailKitEmailSender>();
++builder.Services.AddHostedService<EmailQueueHostedService>();
++builder.Services.AddScoped<IEmailService, EmailService>();
++// Calls the Java backend's invoice-PDF endpoint instead of generating
++// locally with QuestPDF — see JavaInvoicePdfService. Swap back to
++// InvoicePdfService to generate locally without the Java backend running.
++builder.Services.AddScoped<IInvoicePdfService, JavaInvoicePdfService>();
++builder.Services.AddScoped<IStaffService, StaffService>();
++
++// CH02 — Strategy-based pricing policies
++builder.Services.Configure<PricingSettings>(
++    builder.Configuration.GetSection(PricingSettings.SectionName));
++
++builder.Services.AddScoped<StandardPricingPolicy>();
++builder.Services.AddScoped<WeekendPricingPolicy>();
++builder.Services.AddScoped<SeasonalPricingPolicy>();
++builder.Services.AddScoped<IPricingPolicySelector, PricingPolicySelector>();
++
++builder.Services.Configure<AiSettings>(builder.Configuration.GetSection(AiSettings.SectionName));
++builder.Services.AddScoped<IAiInsightsService, AiInsightsService>();
++
++// Requirement #11 — register a typed HttpClient for the legacy Java microservice.
++builder.Services.AddHttpClient<IJavaMicroserviceClient, JavaMicroserviceClient>(client =>
++{
++    var javaBaseUrl = builder.Configuration["JavaMicroservice:BaseUrl"] ?? "http://localhost:8080";
++    client.BaseAddress = new Uri(javaBaseUrl);
++    client.Timeout = TimeSpan.FromSeconds(10);
++});
++
++var app = builder.Build();
++
++// ---- HTTP pipeline ------------------------------------------------------
++if (app.Environment.IsDevelopment())
++{
++    app.UseSwagger();
++    app.UseSwaggerUI();
++}
++
++app.UseMiddleware<ExceptionHandlingMiddleware>();
++app.UseMiddleware<RequestLoggingMiddleware>();
++
++app.UseCors();
++
++app.UseAuthentication();
++app.UseAuthorization();
++
++app.MapControllers();
++
++using (var scope = app.Services.CreateScope())
++{
++    var db = scope.ServiceProvider.GetRequiredService<FlemanDbContext>();
++    db.Database.Migrate();
++    await FlemanApi.Data.DataSeeder.SeedAsync(db);
++}
++
++app.Run();
+\ No newline at end of file
+diff --git a/WanderCar_DotNet/src/FlemanApi/Service/BookingService.cs b/WanderCar_DotNet/src/FlemanApi/Service/BookingService.cs
+index c829922..dc5784f 100644
+--- a/WanderCar_DotNet/src/FlemanApi/Service/BookingService.cs
++++ b/WanderCar_DotNet/src/FlemanApi/Service/BookingService.cs
+@@ -1,459 +1,483 @@
+-using System.Net;
+-using System.Security.Cryptography;
+-using FlemanApi.DTO;
+-using FlemanApi.Exceptions;
+-using FlemanApi.Models;
+-using FlemanApi.Repository;
+-using FlemanApi.Security;
+-using FlemanApi.Util;
+-using Microsoft.Extensions.Logging;
+-
+-namespace FlemanApi.Service;
+-
+-// Mirrors com.fleman.service.impl.BookingServiceImpl. A booking reserves a
+-// car TYPE at a hub for a date range, not any specific vehicle — the
+-// physical car is only assigned at staff hand-over (StaffService). See
+-// IAvailabilityRepository for the capacity/overlap check this relies on.
+-public class BookingService : IBookingService
+-{
+-    private static readonly BookingStatus[] ActiveStatuses = { BookingStatus.CONFIRMED, BookingStatus.ONGOING };
+-    private const string ConfirmationLetters = "ABCDEFGHIJKLMNOPQRSTUVWXYZ";
+-    private const string ConfirmationDigits = "0123456789";
+-    private const int ConfirmationLetterCount = 3;
+-    private const int ConfirmationDigitCount = 5;
+-
+-    private readonly IGenericRepository<BookingHeader, long> _bookings;
+-    private readonly IGenericRepository<BookingDetail, long> _bookingDetails;
+-    private readonly IGenericRepository<CarType, long> _carTypes;
+-    private readonly IGenericRepository<Customer, long> _customers;
+-    private readonly IGenericRepository<Hub, long> _hubs;
+-    private readonly IGenericRepository<Addon, long> _addons;
+-    private readonly IGenericRepository<Car, long> _cars;
+-    private readonly IAvailabilityRepository _availability;
+-
+-    // Reusing the sibling services' own DTO builders instead of duplicating
+-    // that mapping logic here — one source of truth per entity type.
+-    private readonly IVehicleService _vehicleService;
+-    private readonly ICustomerService _customerService;
+-    private readonly ILocationService _locationService;
+-    private readonly IAddonService _addonService;
+-    private readonly IEmailService _emailService;
+-    private readonly IAuthenticatedUserAccessor _currentUser;
+-    private readonly ILogger<BookingService> _logger;
+-
+-    public BookingService(
+-        IGenericRepository<BookingHeader, long> bookings,
+-        IGenericRepository<BookingDetail, long> bookingDetails,
+-        IGenericRepository<CarType, long> carTypes,
+-        IGenericRepository<Customer, long> customers,
+-        IGenericRepository<Hub, long> hubs,
+-        IGenericRepository<Addon, long> addons,
+-        IGenericRepository<Car, long> cars,
+-        IAvailabilityRepository availability,
+-        IVehicleService vehicleService,
+-        ICustomerService customerService,
+-        ILocationService locationService,
+-        IAddonService addonService,
+-        IEmailService emailService,
+-        IAuthenticatedUserAccessor currentUser,
+-        ILogger<BookingService> logger)
+-    {
+-        _bookings = bookings;
+-        _bookingDetails = bookingDetails;
+-        _carTypes = carTypes;
+-        _customers = customers;
+-        _hubs = hubs;
+-        _addons = addons;
+-        _cars = cars;
+-        _availability = availability;
+-        _vehicleService = vehicleService;
+-        _customerService = customerService;
+-        _locationService = locationService;
+-        _addonService = addonService;
+-        _emailService = emailService;
+-        _currentUser = currentUser;
+-        _logger = logger;
+-    }
+-
+-    public async Task<BookingResponseDTO> CreateBookingAsync(CreateBookingRequest request)
+-    {
+-        _logger.LogInformation("Booking process started");
+-
+-        long customerId;
+-        if (_currentUser.IsAuthenticated)
+-        {
+-            if (_currentUser.GetCurrentRole() == "STAFF")
+-            {
+-                if (request.CustomerId is null) throw new ApiException("Customer is required.", HttpStatusCode.BadRequest);
+-                customerId = request.CustomerId.Value;
+-            }
+-            else
+-            {
+-                customerId = _currentUser.GetCurrentUserId();
+-            }
+-        }
+-        else
+-        {
+-            if (request.CustomerId is null) throw new ApiException("Customer is required.", HttpStatusCode.BadRequest);
+-            customerId = request.CustomerId.Value;
+-        }
+-
+-        var carType = await _carTypes.GetByIdAsync(request.CarTypeId!.Value)
+-            ?? throw new ResourceNotFoundException($"Car type not found: {request.CarTypeId}");
+-
+-        if (!(request.ReturnDatetime!.Value > request.PickupDatetime!.Value))
+-            throw new ApiException("Return date must be after pickup date", HttpStatusCode.BadRequest);
+-
+-        // Faithfully mirrors the Java source: this checks request.CustomerId
+-        // (the raw request field), not the resolved customerId above — the
+-        // two can differ when a logged-in customer's JWT id doesn't match
+-        // whatever customerId they happened to submit in the body.
+-        if (!await _customers.ExistsAsync(c => c.CustomerId == request.CustomerId))
+-            throw new ResourceNotFoundException($"Customer not found: {request.CustomerId}");
+-
+-        var dropHubId = request.DropHubId ?? request.PickupHubId!.Value;
+-        if (!await _hubs.ExistsAsync(h => h.HubId == request.PickupHubId))
+-            throw new ResourceNotFoundException($"Hub not found: {request.PickupHubId}");
+-        if (!await _hubs.ExistsAsync(h => h.HubId == dropHubId))
+-            throw new ResourceNotFoundException($"Hub not found: {dropHubId}");
+-
+-        await AssertCategoryHasCapacityAsync(request.PickupHubId!.Value, request.CarTypeId!.Value,
+-            request.PickupDatetime.Value, request.ReturnDatetime.Value, null);
+-
+-        var header = new BookingHeader
+-        {
+-            ConfirmationNo = await GenerateConfirmationNoAsync(),
+-            BookingDate = DateTime.Now,
+-            CustomerId = customerId,
+-            CarTypeId = carType.CarTypeId,
+-            CarId = null,
+-            PickupHubId = request.PickupHubId.Value,
+-            DropHubId = dropHubId,
+-            PickupDatetime = request.PickupDatetime.Value,
+-            ReturnDatetime = request.ReturnDatetime.Value,
+-            BookingStatus = BookingStatus.CONFIRMED,
+-            Remarks = request.Remarks ?? string.Empty,
+-        };
+-
+-        var days = DaysBetween(request.PickupDatetime.Value, request.ReturnDatetime.Value);
+-        var rentalAmount = RentalRateCalculator.CalculateRentalAmount(carType, days);
+-
+-        await _bookings.AddAsync(header);
+-        await _bookings.SaveChangesAsync();
+-
+-        var addonAmount = 0.0;
+-        if (request.Addons is not null)
+-        {
+-            foreach (var line in request.Addons)
+-            {
+-                var addon = line.AddonId is null ? null : await _addons.GetByIdAsync(line.AddonId.Value);
+-                if (addon is null) continue;
+-                var subtotal = addon.DailyRate * (line.Quantity ?? 0) * days;
+-                await _bookingDetails.AddAsync(new BookingDetail
+-                {
+-                    BookingId = header.BookingId,
+-                    AddonId = addon.AddonId,
+-                    AddonRate = addon.DailyRate,
+-                    Quantity = line.Quantity,
+-                    Subtotal = subtotal,
+-                });
+-                addonAmount += subtotal;
+-            }
+-        }
+-
+-        header.EstimatedAmount = rentalAmount + addonAmount;
+-        await _bookings.SaveChangesAsync();
+-
+-        try
+-        {
+-            var customer = await _customers.GetByIdAsync(header.CustomerId);
+-            if (customer is not null)
+-            {
+-                var body = $"""
+-                    Dear {customer.FullName},
+-
+-                    Your booking has been confirmed successfully.
+-
+-                    Booking Details
+-                    -------------------------
+-                    Booking No : {header.ConfirmationNo}
+-                    Vehicle Type : {carType.CarTypeName}
+-                    Pickup Date : {header.PickupDatetime}
+-                    Return Date : {header.ReturnDatetime}
+-                    Total Amount : ₹{header.EstimatedAmount:F2}
+-
+-                    Thank you for choosing Fleeman.
+-
+-                    Regards,
+-                    Fleeman Team
+-                    """;
+-                await _emailService.SendEmailAsync(customer.Email, "Booking Confirmation - Fleeman", body);
+-            }
+-        }
+-        catch (Exception ex)
+-        {
+-            _logger.LogWarning(ex, "Failed to send booking confirmation email for {ConfirmationNo}", header.ConfirmationNo);
+-        }
+-
+-        _logger.LogInformation("Booking process completed, confirmationNo={ConfirmationNo}", header.ConfirmationNo);
+-        return await ToResponseDtoAsync(header);
+-    }
+-
+-    public async Task<BookingResponseDTO> GetBookingByConfirmationAsync(string confirmationNo)
+-    {
+-        var header = await FindHeaderAsync(confirmationNo);
+-        ValidateBookingAccess(header);
+-        return await ToResponseDtoAsync(header);
+-    }
+-
+-    public async Task<BookingResponseDTO?> GetLastBookingForCustomerAsync(long customerId)
+-    {
+-        var mine = await GetActiveBookingsOrderedAsync(customerId);
+-        return mine.Count == 0 ? null : await ToResponseDtoAsync(mine[0]);
+-    }
+-
+-    public async Task<IReadOnlyList<BookingResponseDTO>> GetBookingsForCustomerAsync(long customerId)
+-    {
+-        var mine = await GetActiveBookingsOrderedAsync(customerId);
+-        var result = new List<BookingResponseDTO>();
+-        foreach (var h in mine) result.Add(await ToResponseDtoAsync(h));
+-        return result;
+-    }
+-
+-    public async Task<BookingResponseDTO> ModifyBookingAsync(string confirmationNo, ModifyBookingRequest request)
+-    {
+-        var header = await FindHeaderAsync(confirmationNo);
+-        ValidateBookingAccess(header);
+-
+-        // Once a real car has been handed to the customer, the pickup leg
+-        // is history — only the still-pending return leg may still change.
+-        var pickupHubChanged = request.PickupHubId is not null && request.PickupHubId != header.PickupHubId;
+-        var pickupTimeChanged = request.PickupDatetime is not null && request.PickupDatetime != header.PickupDatetime;
+-        if ((pickupHubChanged || pickupTimeChanged) && header.CarId is not null)
+-        {
+-            throw new ApiException("Vehicle has already been handed over — pickup location and time can no longer be changed", HttpStatusCode.Conflict);
+-        }
+-
+-        if (request.PickupHubId is not null)
+-        {
+-            if (!await _hubs.ExistsAsync(h => h.HubId == request.PickupHubId))
+-                throw new ResourceNotFoundException($"Hub not found: {request.PickupHubId}");
+-            header.PickupHubId = request.PickupHubId.Value;
+-        }
+-        if (request.DropHubId is not null)
+-        {
+-            if (!await _hubs.ExistsAsync(h => h.HubId == request.DropHubId))
+-                throw new ResourceNotFoundException($"Hub not found: {request.DropHubId}");
+-            header.DropHubId = request.DropHubId.Value;
+-        }
+-        if (request.PickupDatetime is not null) header.PickupDatetime = request.PickupDatetime.Value;
+-        if (request.ReturnDatetime is not null) header.ReturnDatetime = request.ReturnDatetime.Value;
+-        if (request.Remarks is not null) header.Remarks = request.Remarks;
+-
+-        // Changing the reserved category: only while no real car has been
+-        // handed over yet.
+-        var typeChanged = request.CarTypeId is not null && request.CarTypeId != header.CarTypeId;
+-        if (typeChanged)
+-        {
+-            if (header.CarId is not null)
+-                throw new ApiException("Vehicle has already been handed over — category can no longer be changed", HttpStatusCode.Conflict);
+-            if (!await _carTypes.ExistsAsync(ct => ct.CarTypeId == request.CarTypeId))
+-                throw new ResourceNotFoundException($"Car type not found: {request.CarTypeId}");
+-            header.CarTypeId = request.CarTypeId!.Value;
+-        }
+-
+-        // Any change to hub, dates, or category needs a fresh capacity
+-        // check against the booking's own final values, excluding itself
+-        // from the demand count. Skipped once a car is already assigned.
+-        var needsRecheck = typeChanged || request.PickupHubId is not null
+-            || request.PickupDatetime is not null || request.ReturnDatetime is not null;
+-        if (needsRecheck && header.CarId is null)
+-        {
+-            await AssertCategoryHasCapacityAsync(header.PickupHubId, header.CarTypeId,
+-                header.PickupDatetime, header.ReturnDatetime, header.BookingId);
+-        }
+-
+-        // Replacing the add-on lines: null means "leave as-is", an empty
+-        // list means "every add-on was removed". Locked once a car has
+-        // been handed over, same as the pickup-hub/time guard above.
+-        if (request.Addons is not null && header.CarId is not null)
+-        {
+-            throw new ApiException("Vehicle has already been handed over — add-ons can no longer be changed", HttpStatusCode.Conflict);
+-        }
+-
+-        var days = DaysBetween(header.PickupDatetime, header.ReturnDatetime);
+-        double addonAmount;
+-        if (request.Addons is not null)
+-        {
+-            var existingLines = await _bookingDetails.FindAsync(d => d.BookingId == header.BookingId);
+-            foreach (var line in existingLines) _bookingDetails.Remove(line);
+-
+-            var total = 0.0;
+-            foreach (var line in request.Addons)
+-            {
+-                var addon = line.AddonId is null ? null : await _addons.GetByIdAsync(line.AddonId.Value);
+-                if (addon is null) continue;
+-                var subtotal = addon.DailyRate * (line.Quantity ?? 0) * days;
+-                await _bookingDetails.AddAsync(new BookingDetail
+-                {
+-                    BookingId = header.BookingId,
+-                    AddonId = addon.AddonId,
+-                    AddonRate = addon.DailyRate,
+-                    Quantity = line.Quantity,
+-                    Subtotal = subtotal,
+-                });
+-                total += subtotal;
+-            }
+-            addonAmount = total;
+-        }
+-        else
+-        {
+-            var currentLines = await _bookingDetails.FindAsync(d => d.BookingId == header.BookingId);
+-            addonAmount = currentLines.Sum(d => d.Subtotal ?? 0);
+-        }
+-
+-        var currentCarType = await _carTypes.GetByIdAsync(header.CarTypeId);
+-        var rentalAmount = currentCarType is not null ? RentalRateCalculator.CalculateRentalAmount(currentCarType, days) : 0.0;
+-        header.EstimatedAmount = rentalAmount + addonAmount;
+-
+-        await _bookings.SaveChangesAsync();
+-        return await ToResponseDtoAsync(header);
+-    }
+-
+-    public async Task<BookingResponseDTO> CancelBookingAsync(string confirmationNo)
+-    {
+-        var header = await FindHeaderAsync(confirmationNo);
+-        ValidateBookingAccess(header);
+-        header.BookingStatus = BookingStatus.CANCELLED;
+-
+-        // A car has only ever been touched if it was actually handed over —
+-        // release it back to the fleet in that case. Otherwise there's
+-        // nothing to release: the booking only ever held category capacity.
+-        if (header.CarId is not null)
+-        {
+-            var car = await _cars.GetByIdAsync(header.CarId.Value);
+-            if (car is not null)
+-            {
+-                car.Status = CarStatus.AVAILABLE;
+-                car.IsAvailable = true;
+-            }
+-        }
+-
+-        await _bookings.SaveChangesAsync();
+-        return await ToResponseDtoAsync(header);
+-    }
+-
+-    // Capacity (physical fleet of this type at this hub, minus maintenance)
+-    // minus demand (other CONFIRMED/ONGOING bookings whose dates overlap)
+-    // must leave at least one car free, or the reservation is rejected.
+-    private async Task AssertCategoryHasCapacityAsync(
+-        long hubId, long carTypeId, DateTime pickupDatetime, DateTime returnDatetime, long? excludeBookingId)
+-    {
+-        var capacity = await _availability.CountCapacityAsync(hubId, carTypeId);
+-        var overlapping = await _availability.CountOverlappingAsync(hubId, carTypeId, pickupDatetime, returnDatetime, excludeBookingId);
+-        if (capacity - overlapping <= 0)
+-        {
+-            throw new ApiException("That car type is no longer available at this hub for these dates", HttpStatusCode.Conflict);
+-        }
+-    }
+-
+-    private async Task<BookingHeader> FindHeaderAsync(string confirmationNo)
+-    {
+-        var lower = confirmationNo.ToLower();
+-        return await _bookings.FirstOrDefaultAsync(b => b.ConfirmationNo.ToLower() == lower)
+-            ?? throw new ResourceNotFoundException("No booking found for that confirmation number");
+-    }
+-
+-    private async Task<List<BookingHeader>> GetActiveBookingsOrderedAsync(long customerId)
+-    {
+-        var mine = await _bookings.FindAsync(b => b.CustomerId == customerId && b.BookingStatus != BookingStatus.CANCELLED);
+-        return mine.OrderByDescending(b => b.BookingDate).ToList();
+-    }
+-
+-    // Fully random each time (3 letters + 5 digits, e.g. "QXR48213") —
+-    // re-rolls on the rare chance of a collision with an existing
+-    // confirmation number.
+-    private async Task<string> GenerateConfirmationNoAsync()
+-    {
+-        string candidate;
+-        do
+-        {
+-            var chars = new char[ConfirmationLetterCount + ConfirmationDigitCount];
+-            for (var i = 0; i < ConfirmationLetterCount; i++)
+-                chars[i] = ConfirmationLetters[RandomNumberGenerator.GetInt32(ConfirmationLetters.Length)];
+-            for (var i = 0; i < ConfirmationDigitCount; i++)
+-                chars[ConfirmationLetterCount + i] = ConfirmationDigits[RandomNumberGenerator.GetInt32(ConfirmationDigits.Length)];
+-            candidate = new string(chars);
+-        } while (await _bookings.ExistsAsync(b => b.ConfirmationNo.ToLower() == candidate.ToLower()));
+-        return candidate;
+-    }
+-
+-    private static int DaysBetween(DateTime pickup, DateTime returnDt)
+-    {
+-        var hours = (returnDt - pickup).TotalHours;
+-        var fullDays = (long)Math.Ceiling(hours / 24.0);
+-        return (int)Math.Max(1, fullDays);
+-    }
+-
+-    private void ValidateBookingAccess(BookingHeader booking)
+-    {
+-        var role = _currentUser.GetCurrentRole();
+-        if (role == "STAFF") return;
+-
+-        var customerId = _currentUser.GetCurrentUserId();
+-        if (booking.CustomerId != customerId)
+-        {
+-            throw new ApiException("Access denied.", HttpStatusCode.Forbidden);
+-        }
+-    }
+-
+-    // The .NET equivalent of the Java enrich(header) function — every
+-    // booking-related endpoint returns this same nested shape. No entity
+-    // relationships are traversed; every nested object is fetched by its
+-    // plain id column through the owning service.
+-    private async Task<BookingResponseDTO> ToResponseDtoAsync(BookingHeader header)
+-    {
+-        var dto = new BookingResponseDTO
+-        {
+-            BookingId = header.BookingId,
+-            ConfirmationNo = header.ConfirmationNo,
+-            BookingDate = header.BookingDate,
+-            CustomerId = header.CustomerId,
+-            CarId = header.CarId,
+-            PickupHubId = header.PickupHubId,
+-            DropHubId = header.DropHubId,
+-            PickupDatetime = header.PickupDatetime,
+-            ReturnDatetime = header.ReturnDatetime,
+-            ActualHandoverDatetime = header.ActualHandoverDatetime,
+-            ActualReturnDatetime = header.ActualReturnDatetime,
+-            HandoverFuelLevel = header.HandoverFuelLevel,
+-            BookingStatus = header.BookingStatus?.ToString(),
+-            EstimatedAmount = header.EstimatedAmount,
+-            Remarks = header.Remarks,
+-        };
+-
+-        dto.CarType = await _vehicleService.GetCarTypeByIdAsync(header.CarTypeId);
+-        if (header.CarId is not null)
+-        {
+-            dto.Car = await _vehicleService.GetCarByIdAsync(header.CarId.Value);
+-        }
+-        dto.Customer = await _customerService.GetCustomerByIdAsync(header.CustomerId);
+-        dto.PickupHub = await _locationService.GetHubByIdAsync(header.PickupHubId);
+-        dto.DropHub = await _locationService.GetHubByIdAsync(header.DropHubId);
+-
+-        var allAddons = await _addonService.GetAddonsAsync();
+-        var lines = await _bookingDetails.FindAsync(d => d.BookingId == header.BookingId);
+-        dto.AddonLines = lines.Select(detail => new BookingDetailDTO
+-        {
+-            BookingDetailId = detail.BookingDetailId,
+-            BookingId = header.BookingId,
+-            AddonId = detail.AddonId,
+-            AddonRate = detail.AddonRate,
+-            Quantity = detail.Quantity,
+-            Subtotal = detail.Subtotal,
+-            Addon = allAddons.FirstOrDefault(a => a.AddonId == detail.AddonId),
+-        }).ToList();
+-
+-        return dto;
+-    }
+-}
++using System.Net;
++using System.Security.Cryptography;
++using FlemanApi.DTO;
++using FlemanApi.Exceptions;
++using FlemanApi.Models;
++using FlemanApi.Repository;
++using FlemanApi.Security;
++using FlemanApi.Util;
++using Microsoft.Extensions.Logging;
++
++namespace FlemanApi.Service;
++
++// Mirrors com.fleman.service.impl.BookingServiceImpl. A booking reserves a
++// car TYPE at a hub for a date range, not any specific vehicle — the
++// physical car is only assigned at staff hand-over (StaffService). See
++// IAvailabilityRepository for the capacity/overlap check this relies on.
++public class BookingService : IBookingService
++{
++    private static readonly BookingStatus[] ActiveStatuses = { BookingStatus.CONFIRMED, BookingStatus.ONGOING };
++    private const string ConfirmationLetters = "ABCDEFGHIJKLMNOPQRSTUVWXYZ";
++    private const string ConfirmationDigits = "0123456789";
++    private const int ConfirmationLetterCount = 3;
++    private const int ConfirmationDigitCount = 5;
++
++    private readonly IGenericRepository<BookingHeader, long> _bookings;
++    private readonly IGenericRepository<BookingDetail, long> _bookingDetails;
++    private readonly IGenericRepository<CarType, long> _carTypes;
++    private readonly IGenericRepository<Customer, long> _customers;
++    private readonly IGenericRepository<Hub, long> _hubs;
++    private readonly IGenericRepository<Addon, long> _addons;
++    private readonly IGenericRepository<Car, long> _cars;
++    private readonly IAvailabilityRepository _availability;
++
++    // Reusing the sibling services' own DTO builders instead of duplicating
++    // that mapping logic here — one source of truth per entity type.
++    private readonly IVehicleService _vehicleService;
++    private readonly ICustomerService _customerService;
++    private readonly ILocationService _locationService;
++    private readonly IAddonService _addonService;
++    private readonly IEmailService _emailService;
++    private readonly IAuthenticatedUserAccessor _currentUser;
++    private readonly ILogger<BookingService> _logger;
++    private readonly IPricingPolicySelector _pricingPolicySelector;
++
++    public BookingService(
++        IGenericRepository<BookingHeader, long> bookings,
++        IGenericRepository<BookingDetail, long> bookingDetails,
++        IGenericRepository<CarType, long> carTypes,
++        IGenericRepository<Customer, long> customers,
++        IGenericRepository<Hub, long> hubs,
++        IGenericRepository<Addon, long> addons,
++        IGenericRepository<Car, long> cars,
++        IAvailabilityRepository availability,
++        IVehicleService vehicleService,
++        ICustomerService customerService,
++        ILocationService locationService,
++        IAddonService addonService,
++        IEmailService emailService,
++        IAuthenticatedUserAccessor currentUser,
++        ILogger<BookingService> logger,
++        IPricingPolicySelector pricingPolicySelector)
++    {
++        _bookings = bookings;
++        _bookingDetails = bookingDetails;
++        _carTypes = carTypes;
++        _customers = customers;
++        _hubs = hubs;
++        _addons = addons;
++        _cars = cars;
++        _availability = availability;
++        _vehicleService = vehicleService;
++        _customerService = customerService;
++        _locationService = locationService;
++        _addonService = addonService;
++        _emailService = emailService;
++        _currentUser = currentUser;
++        _logger = logger;
++        _pricingPolicySelector = pricingPolicySelector;
++    }
++
++    public async Task<BookingResponseDTO> CreateBookingAsync(CreateBookingRequest request)
++    {
++        _logger.LogInformation("Booking process started");
++
++        long customerId;
++        if (_currentUser.IsAuthenticated)
++        {
++            if (_currentUser.GetCurrentRole() == "STAFF")
++            {
++                if (request.CustomerId is null) throw new ApiException("Customer is required.", HttpStatusCode.BadRequest);
++                customerId = request.CustomerId.Value;
++            }
++            else
++            {
++                customerId = _currentUser.GetCurrentUserId();
++            }
++        }
++        else
++        {
++            if (request.CustomerId is null) throw new ApiException("Customer is required.", HttpStatusCode.BadRequest);
++            customerId = request.CustomerId.Value;
++        }
++
++        var carType = await _carTypes.GetByIdAsync(request.CarTypeId!.Value)
++            ?? throw new ResourceNotFoundException($"Car type not found: {request.CarTypeId}");
++
++        if (!(request.ReturnDatetime!.Value > request.PickupDatetime!.Value))
++            throw new ApiException("Return date must be after pickup date", HttpStatusCode.BadRequest);
++
++        // Faithfully mirrors the Java source: this checks request.CustomerId
++        // (the raw request field), not the resolved customerId above — the
++        // two can differ when a logged-in customer's JWT id doesn't match
++        // whatever customerId they happened to submit in the body.
++        if (!await _customers.ExistsAsync(c => c.CustomerId == request.CustomerId))
++            throw new ResourceNotFoundException($"Customer not found: {request.CustomerId}");
++
++        var dropHubId = request.DropHubId ?? request.PickupHubId!.Value;
++        if (!await _hubs.ExistsAsync(h => h.HubId == request.PickupHubId))
++            throw new ResourceNotFoundException($"Hub not found: {request.PickupHubId}");
++        if (!await _hubs.ExistsAsync(h => h.HubId == dropHubId))
++            throw new ResourceNotFoundException($"Hub not found: {dropHubId}");
++
++        await AssertCategoryHasCapacityAsync(request.PickupHubId!.Value, request.CarTypeId!.Value,
++            request.PickupDatetime.Value, request.ReturnDatetime.Value, null);
++
++        var header = new BookingHeader
++        {
++            ConfirmationNo = await GenerateConfirmationNoAsync(),
++            BookingDate = DateTime.Now,
++            CustomerId = customerId,
++            CarTypeId = carType.CarTypeId,
++            CarId = null,
++            PickupHubId = request.PickupHubId.Value,
++            DropHubId = dropHubId,
++            PickupDatetime = request.PickupDatetime.Value,
++            ReturnDatetime = request.ReturnDatetime.Value,
++            BookingStatus = BookingStatus.CONFIRMED,
++            Remarks = request.Remarks ?? string.Empty,
++        };
++
++        var days = DaysBetween(request.PickupDatetime.Value, request.ReturnDatetime.Value);
++
++        var rentalAmount = _pricingPolicySelector
++            .SelectPolicy(
++                carType,
++                request.PickupDatetime.Value,
++                request.ReturnDatetime.Value)
++            .CalculatePrice(
++                carType,
++                request.PickupDatetime.Value,
++                request.ReturnDatetime.Value);
++
++        await _bookings.AddAsync(header);
++        await _bookings.SaveChangesAsync();
++
++        var addonAmount = 0.0;
++        if (request.Addons is not null)
++        {
++            foreach (var line in request.Addons)
++            {
++                var addon = line.AddonId is null ? null : await _addons.GetByIdAsync(line.AddonId.Value);
++                if (addon is null) continue;
++                var subtotal = addon.DailyRate * (line.Quantity ?? 0) * days;
++                await _bookingDetails.AddAsync(new BookingDetail
++                {
++                    BookingId = header.BookingId,
++                    AddonId = addon.AddonId,
++                    AddonRate = addon.DailyRate,
++                    Quantity = line.Quantity,
++                    Subtotal = subtotal,
++                });
++                addonAmount += subtotal;
++            }
++        }
++
++        header.EstimatedAmount = rentalAmount + addonAmount;
++        await _bookings.SaveChangesAsync();
++
++        try
++        {
++            var customer = await _customers.GetByIdAsync(header.CustomerId);
++            if (customer is not null)
++            {
++                var body = $"""
++                    Dear {customer.FullName},
++
++                    Your booking has been confirmed successfully.
++
++                    Booking Details
++                    -------------------------
++                    Booking No : {header.ConfirmationNo}
++                    Vehicle Type : {carType.CarTypeName}
++                    Pickup Date : {header.PickupDatetime}
++                    Return Date : {header.ReturnDatetime}
++                    Total Amount : ₹{header.EstimatedAmount:F2}
++
++                    Thank you for choosing Fleeman.
++
++                    Regards,
++                    Fleeman Team
++                    """;
++                await _emailService.SendEmailAsync(customer.Email, "Booking Confirmation - Fleeman", body);
++            }
++        }
++        catch (Exception ex)
++        {
++            _logger.LogWarning(ex, "Failed to send booking confirmation email for {ConfirmationNo}", header.ConfirmationNo);
++        }
++
++        _logger.LogInformation("Booking process completed, confirmationNo={ConfirmationNo}", header.ConfirmationNo);
++        return await ToResponseDtoAsync(header);
++    }
++
++    public async Task<BookingResponseDTO> GetBookingByConfirmationAsync(string confirmationNo)
++    {
++        var header = await FindHeaderAsync(confirmationNo);
++        ValidateBookingAccess(header);
++        return await ToResponseDtoAsync(header);
++    }
++
++    public async Task<BookingResponseDTO?> GetLastBookingForCustomerAsync(long customerId)
++    {
++        var mine = await GetActiveBookingsOrderedAsync(customerId);
++        return mine.Count == 0 ? null : await ToResponseDtoAsync(mine[0]);
++    }
++
++    public async Task<IReadOnlyList<BookingResponseDTO>> GetBookingsForCustomerAsync(long customerId)
++    {
++        var mine = await GetActiveBookingsOrderedAsync(customerId);
++        var result = new List<BookingResponseDTO>();
++        foreach (var h in mine) result.Add(await ToResponseDtoAsync(h));
++        return result;
++    }
++
++    public async Task<BookingResponseDTO> ModifyBookingAsync(string confirmationNo, ModifyBookingRequest request)
++    {
++        var header = await FindHeaderAsync(confirmationNo);
++        ValidateBookingAccess(header);
++
++        // Once a real car has been handed to the customer, the pickup leg
++        // is history — only the still-pending return leg may still change.
++        var pickupHubChanged = request.PickupHubId is not null && request.PickupHubId != header.PickupHubId;
++        var pickupTimeChanged = request.PickupDatetime is not null && request.PickupDatetime != header.PickupDatetime;
++        if ((pickupHubChanged || pickupTimeChanged) && header.CarId is not null)
++        {
++            throw new ApiException("Vehicle has already been handed over — pickup location and time can no longer be changed", HttpStatusCode.Conflict);
++        }
++
++        if (request.PickupHubId is not null)
++        {
++            if (!await _hubs.ExistsAsync(h => h.HubId == request.PickupHubId))
++                throw new ResourceNotFoundException($"Hub not found: {request.PickupHubId}");
++            header.PickupHubId = request.PickupHubId.Value;
++        }
++        if (request.DropHubId is not null)
++        {
++            if (!await _hubs.ExistsAsync(h => h.HubId == request.DropHubId))
++                throw new ResourceNotFoundException($"Hub not found: {request.DropHubId}");
++            header.DropHubId = request.DropHubId.Value;
++        }
++        if (request.PickupDatetime is not null) header.PickupDatetime = request.PickupDatetime.Value;
++        if (request.ReturnDatetime is not null) header.ReturnDatetime = request.ReturnDatetime.Value;
++        if (request.Remarks is not null) header.Remarks = request.Remarks;
++
++        // Changing the reserved category: only while no real car has been
++        // handed over yet.
++        var typeChanged = request.CarTypeId is not null && request.CarTypeId != header.CarTypeId;
++        if (typeChanged)
++        {
++            if (header.CarId is not null)
++                throw new ApiException("Vehicle has already been handed over — category can no longer be changed", HttpStatusCode.Conflict);
++            if (!await _carTypes.ExistsAsync(ct => ct.CarTypeId == request.CarTypeId))
++                throw new ResourceNotFoundException($"Car type not found: {request.CarTypeId}");
++            header.CarTypeId = request.CarTypeId!.Value;
++        }
++
++        // Any change to hub, dates, or category needs a fresh capacity
++        // check against the booking's own final values, excluding itself
++        // from the demand count. Skipped once a car is already assigned.
++        var needsRecheck = typeChanged || request.PickupHubId is not null
++            || request.PickupDatetime is not null || request.ReturnDatetime is not null;
++        if (needsRecheck && header.CarId is null)
++        {
++            await AssertCategoryHasCapacityAsync(header.PickupHubId, header.CarTypeId,
++                header.PickupDatetime, header.ReturnDatetime, header.BookingId);
++        }
++
++        // Replacing the add-on lines: null means "leave as-is", an empty
++        // list means "every add-on was removed". Locked once a car has
++        // been handed over, same as the pickup-hub/time guard above.
++        if (request.Addons is not null && header.CarId is not null)
++        {
++            throw new ApiException("Vehicle has already been handed over — add-ons can no longer be changed", HttpStatusCode.Conflict);
++        }
++
++        var days = DaysBetween(header.PickupDatetime, header.ReturnDatetime);
++        double addonAmount;
++        if (request.Addons is not null)
++        {
++            var existingLines = await _bookingDetails.FindAsync(d => d.BookingId == header.BookingId);
++            foreach (var line in existingLines) _bookingDetails.Remove(line);
++
++            var total = 0.0;
++            foreach (var line in request.Addons)
++            {
++                var addon = line.AddonId is null ? null : await _addons.GetByIdAsync(line.AddonId.Value);
++                if (addon is null) continue;
++                var subtotal = addon.DailyRate * (line.Quantity ?? 0) * days;
++                await _bookingDetails.AddAsync(new BookingDetail
++                {
++                    BookingId = header.BookingId,
++                    AddonId = addon.AddonId,
++                    AddonRate = addon.DailyRate,
++                    Quantity = line.Quantity,
++                    Subtotal = subtotal,
++                });
++                total += subtotal;
++            }
++            addonAmount = total;
++        }
++        else
++        {
++            var currentLines = await _bookingDetails.FindAsync(d => d.BookingId == header.BookingId);
++            addonAmount = currentLines.Sum(d => d.Subtotal ?? 0);
++        }
++
++        var currentCarType = await _carTypes.GetByIdAsync(header.CarTypeId);
++
++        var rentalAmount = currentCarType is not null
++            ? _pricingPolicySelector
++                .SelectPolicy(
++                    currentCarType,
++                    header.PickupDatetime,
++                    header.ReturnDatetime)
++                .CalculatePrice(
++                    currentCarType,
++                    header.PickupDatetime,
++                    header.ReturnDatetime)
++            : 0.0;
++
++        header.EstimatedAmount = rentalAmount + addonAmount;
++
++        await _bookings.SaveChangesAsync();
++        return await ToResponseDtoAsync(header);
++    }
++
++    public async Task<BookingResponseDTO> CancelBookingAsync(string confirmationNo)
++    {
++        var header = await FindHeaderAsync(confirmationNo);
++        ValidateBookingAccess(header);
++        header.BookingStatus = BookingStatus.CANCELLED;
++
++        // A car has only ever been touched if it was actually handed over —
++        // release it back to the fleet in that case. Otherwise there's
++        // nothing to release: the booking only ever held category capacity.
++        if (header.CarId is not null)
++        {
++            var car = await _cars.GetByIdAsync(header.CarId.Value);
++            if (car is not null)
++            {
++                car.Status = CarStatus.AVAILABLE;
++                car.IsAvailable = true;
++            }
++        }
++
++        await _bookings.SaveChangesAsync();
++        return await ToResponseDtoAsync(header);
++    }
++
++    // Capacity (physical fleet of this type at this hub, minus maintenance)
++    // minus demand (other CONFIRMED/ONGOING bookings whose dates overlap)
++    // must leave at least one car free, or the reservation is rejected.
++    private async Task AssertCategoryHasCapacityAsync(
++        long hubId, long carTypeId, DateTime pickupDatetime, DateTime returnDatetime, long? excludeBookingId)
++    {
++        var capacity = await _availability.CountCapacityAsync(hubId, carTypeId);
++        var overlapping = await _availability.CountOverlappingAsync(hubId, carTypeId, pickupDatetime, returnDatetime, excludeBookingId);
++        if (capacity - overlapping <= 0)
++        {
++            throw new ApiException("That car type is no longer available at this hub for these dates", HttpStatusCode.Conflict);
++        }
++    }
++
++    private async Task<BookingHeader> FindHeaderAsync(string confirmationNo)
++    {
++        var lower = confirmationNo.ToLower();
++        return await _bookings.FirstOrDefaultAsync(b => b.ConfirmationNo.ToLower() == lower)
++            ?? throw new ResourceNotFoundException("No booking found for that confirmation number");
++    }
++
++    private async Task<List<BookingHeader>> GetActiveBookingsOrderedAsync(long customerId)
++    {
++        var mine = await _bookings.FindAsync(b => b.CustomerId == customerId && b.BookingStatus != BookingStatus.CANCELLED);
++        return mine.OrderByDescending(b => b.BookingDate).ToList();
++    }
++
++    // Fully random each time (3 letters + 5 digits, e.g. "QXR48213") —
++    // re-rolls on the rare chance of a collision with an existing
++    // confirmation number.
++    private async Task<string> GenerateConfirmationNoAsync()
++    {
++        string candidate;
++        do
++        {
++            var chars = new char[ConfirmationLetterCount + ConfirmationDigitCount];
++            for (var i = 0; i < ConfirmationLetterCount; i++)
++                chars[i] = ConfirmationLetters[RandomNumberGenerator.GetInt32(ConfirmationLetters.Length)];
++            for (var i = 0; i < ConfirmationDigitCount; i++)
++                chars[ConfirmationLetterCount + i] = ConfirmationDigits[RandomNumberGenerator.GetInt32(ConfirmationDigits.Length)];
++            candidate = new string(chars);
++        } while (await _bookings.ExistsAsync(b => b.ConfirmationNo.ToLower() == candidate.ToLower()));
++        return candidate;
++    }
++
++    private static int DaysBetween(DateTime pickup, DateTime returnDt)
++    {
++        var hours = (returnDt - pickup).TotalHours;
++        var fullDays = (long)Math.Ceiling(hours / 24.0);
++        return (int)Math.Max(1, fullDays);
++    }
++
++    private void ValidateBookingAccess(BookingHeader booking)
++    {
++        var role = _currentUser.GetCurrentRole();
++        if (role == "STAFF") return;
++
++        var customerId = _currentUser.GetCurrentUserId();
++        if (booking.CustomerId != customerId)
++        {
++            throw new ApiException("Access denied.", HttpStatusCode.Forbidden);
++        }
++    }
++
++    // The .NET equivalent of the Java enrich(header) function — every
++    // booking-related endpoint returns this same nested shape. No entity
++    // relationships are traversed; every nested object is fetched by its
++    // plain id column through the owning service.
++    private async Task<BookingResponseDTO> ToResponseDtoAsync(BookingHeader header)
++    {
++        var dto = new BookingResponseDTO
++        {
++            BookingId = header.BookingId,
++            ConfirmationNo = header.ConfirmationNo,
++            BookingDate = header.BookingDate,
++            CustomerId = header.CustomerId,
++            CarId = header.CarId,
++            PickupHubId = header.PickupHubId,
++            DropHubId = header.DropHubId,
++            PickupDatetime = header.PickupDatetime,
++            ReturnDatetime = header.ReturnDatetime,
++            ActualHandoverDatetime = header.ActualHandoverDatetime,
++            ActualReturnDatetime = header.ActualReturnDatetime,
++            HandoverFuelLevel = header.HandoverFuelLevel,
++            BookingStatus = header.BookingStatus?.ToString(),
++            EstimatedAmount = header.EstimatedAmount,
++            Remarks = header.Remarks,
++        };
++
++        dto.CarType = await _vehicleService.GetCarTypeByIdAsync(header.CarTypeId);
++        if (header.CarId is not null)
++        {
++            dto.Car = await _vehicleService.GetCarByIdAsync(header.CarId.Value);
++        }
++        dto.Customer = await _customerService.GetCustomerByIdAsync(header.CustomerId);
++        dto.PickupHub = await _locationService.GetHubByIdAsync(header.PickupHubId);
++        dto.DropHub = await _locationService.GetHubByIdAsync(header.DropHubId);
++
++        var allAddons = await _addonService.GetAddonsAsync();
++        var lines = await _bookingDetails.FindAsync(d => d.BookingId == header.BookingId);
++        dto.AddonLines = lines.Select(detail => new BookingDetailDTO
++        {
++            BookingDetailId = detail.BookingDetailId,
++            BookingId = header.BookingId,
++            AddonId = detail.AddonId,
++            AddonRate = detail.AddonRate,
++            Quantity = detail.Quantity,
++            Subtotal = detail.Subtotal,
++            Addon = allAddons.FirstOrDefault(a => a.AddonId == detail.AddonId),
++        }).ToList();
++
++        return dto;
++    }
++}
+\ No newline at end of file
+diff --git a/WanderCar_DotNet/src/FlemanApi/Service/StaffService.cs b/WanderCar_DotNet/src/FlemanApi/Service/StaffService.cs
+index 57201cb..2160da8 100644
+--- a/WanderCar_DotNet/src/FlemanApi/Service/StaffService.cs
++++ b/WanderCar_DotNet/src/FlemanApi/Service/StaffService.cs
+@@ -1,307 +1,329 @@
+-using System.Net;
+-using FlemanApi.DTO;
+-using FlemanApi.Exceptions;
+-using FlemanApi.Models;
+-using FlemanApi.Repository;
+-using FlemanApi.Util;
+-using Microsoft.Extensions.Logging;
+-
+-namespace FlemanApi.Service;
+-
+-// Mirrors com.fleman.service.impl.StaffServiceImpl.
+-public class StaffService : IStaffService
+-{
+-    // Fuel level is stored in quarters of a tank: 25/50/75/100.
+-    private const int FuelLevelPerQuarter = 25;
+-    private const double FuelChargePerQuarter = 2.0;
+-
+-    private readonly IGenericRepository<BookingHeader, long> _bookings;
+-    private readonly IGenericRepository<BookingDetail, long> _bookingDetails;
+-    private readonly IGenericRepository<Car, long> _cars;
+-    private readonly IGenericRepository<CarType, long> _carTypes;
+-    private readonly IGenericRepository<Customer, long> _customers;
+-    private readonly IGenericRepository<Addon, long> _addons;
+-    private readonly IGenericRepository<InvoiceHeader, long> _invoiceHeaders;
+-    private readonly IGenericRepository<InvoiceDetail, long> _invoiceDetails;
+-    private readonly IAvailabilityRepository _availability;
+-    private readonly IBookingService _bookingService;
+-    private readonly IVehicleService _vehicleService;
+-    private readonly IEmailService _emailService;
+-    private readonly IInvoicePdfService _invoicePdfService;
+-    private readonly ILogger<StaffService> _logger;
+-
+-    public StaffService(
+-        IGenericRepository<BookingHeader, long> bookings,
+-        IGenericRepository<BookingDetail, long> bookingDetails,
+-        IGenericRepository<Car, long> cars,
+-        IGenericRepository<CarType, long> carTypes,
+-        IGenericRepository<Customer, long> customers,
+-        IGenericRepository<Addon, long> addons,
+-        IGenericRepository<InvoiceHeader, long> invoiceHeaders,
+-        IGenericRepository<InvoiceDetail, long> invoiceDetails,
+-        IAvailabilityRepository availability,
+-        IBookingService bookingService,
+-        IVehicleService vehicleService,
+-        IEmailService emailService,
+-        IInvoicePdfService invoicePdfService,
+-        ILogger<StaffService> logger)
+-    {
+-        _bookings = bookings;
+-        _bookingDetails = bookingDetails;
+-        _cars = cars;
+-        _carTypes = carTypes;
+-        _customers = customers;
+-        _addons = addons;
+-        _invoiceHeaders = invoiceHeaders;
+-        _invoiceDetails = invoiceDetails;
+-        _availability = availability;
+-        _bookingService = bookingService;
+-        _vehicleService = vehicleService;
+-        _emailService = emailService;
+-        _invoicePdfService = invoicePdfService;
+-        _logger = logger;
+-    }
+-
+-    public async Task<BookingResponseDTO> HandoverVehicleAsync(string confirmationNo, HandoverRequest request)
+-    {
+-        var header = await FindHeaderAsync(confirmationNo);
+-
+-        if (header.CarId is not null)
+-            throw new ApiException("This booking already has a vehicle handed over", HttpStatusCode.Conflict);
+-        if (request.CarId is null)
+-            throw new ApiException("Pick a vehicle to hand over", HttpStatusCode.BadRequest);
+-
+-        // The car staff picked must actually fit this booking — right hub,
+-        // right reserved category, and physically free right now.
+-        var car = await _cars.GetByIdAsync(request.CarId.Value)
+-            ?? throw new ResourceNotFoundException($"Car not found: {request.CarId}");
+-        if (car.HubId != header.PickupHubId)
+-            throw new ApiException("That vehicle isn't at this booking's pickup hub", HttpStatusCode.Conflict);
+-        if (car.CarTypeId != header.CarTypeId)
+-            throw new ApiException("That vehicle isn't the reserved category for this booking", HttpStatusCode.Conflict);
+-        if (car.Status != CarStatus.AVAILABLE)
+-            throw new ApiException("That vehicle is no longer available", HttpStatusCode.Conflict);
+-
+-        car.Status = CarStatus.BOOKED;
+-        car.IsAvailable = false;
+-        if (request.FuelStatus is not null) car.FuelLevel = request.FuelStatus;
+-
+-        header.CarId = car.CarId;
+-        header.BookingStatus = BookingStatus.ONGOING;
+-        header.ActualHandoverDatetime = DateTime.Now;
+-        // Snapshot onto the booking — Car.FuelLevel gets overwritten again
+-        // at return, so this is the only place the return-time fuel-
+-        // shortfall charge can still read it from.
+-        header.HandoverFuelLevel = car.FuelLevel;
+-        if (!string.IsNullOrWhiteSpace(request.Notes))
+-        {
+-            var existing = header.Remarks ?? string.Empty;
+-            header.Remarks = $"{existing} | Handover: {request.Notes}".Trim();
+-        }
+-
+-        await _bookings.SaveChangesAsync();
+-
+-        return await _bookingService.GetBookingByConfirmationAsync(confirmationNo);
+-    }
+-
+-    public async Task<InvoiceResponseDTO> ProcessReturnAsync(string confirmationNo, ProcessReturnRequest request)
+-    {
+-        var header = await FindHeaderAsync(confirmationNo);
+-        if (header.CarId is null)
+-            throw new ApiException("This booking hasn't been handed over yet — nothing to return", HttpStatusCode.Conflict);
+-
+-        var car = await _cars.GetByIdAsync(header.CarId.Value)
+-            ?? throw new ResourceNotFoundException($"Car not found: {header.CarId}");
+-        var carType = await _carTypes.GetByIdAsync(car.CarTypeId)
+-            ?? throw new ResourceNotFoundException($"Car type not found: {car.CarTypeId}");
+-        var customer = await _customers.GetByIdAsync(header.CustomerId)
+-            ?? throw new ResourceNotFoundException($"Customer not found: {header.CustomerId}");
+-        var lines = await _bookingDetails.FindAsync(d => d.BookingId == header.BookingId);
+-
+-        // Bill against what actually happened — hand-over time and right
+-        // now — not the originally booked pickup/return window.
+-        var actualHandover = header.ActualHandoverDatetime ?? header.PickupDatetime;
+-        var actualReturn = DateTime.Now;
+-        header.ActualReturnDatetime = actualReturn;
+-
+-        var days = DaysBetween(actualHandover, actualReturn);
+-        var rentalAmount = RentalRateCalculator.CalculateRentalAmount(carType, days);
+-        // Re-priced against the actual days billed, not the subtotal frozen
+-        // on the line at booking time — an early return shortens rentalAmount
+-        // above the same way, so add-ons need to shrink with it too instead
+-        // of still billing for the originally planned (longer) stay.
+-        var addonAmount = lines.Sum(l => (l.AddonRate ?? 0) * (l.Quantity ?? 0) * days);
+-        var extraCharge = request.ExtraChargeAmount ?? 0.0;
+-
+-        // Fuel shortfall: tank tracked in quarters (25/50/75/100). Only
+-        // charged when it comes back lower than handed over with.
+-        var handoverFuelLevel = header.HandoverFuelLevel;
+-        var returnFuelLevel = request.FuelStatus ?? car.FuelLevel;
+-        var fuelQuartersShort = handoverFuelLevel is not null && returnFuelLevel is not null
+-            ? Math.Max(0, (handoverFuelLevel.Value - returnFuelLevel.Value) / FuelLevelPerQuarter)
+-            : 0;
+-        var fuelCharge = fuelQuartersShort * FuelChargePerQuarter;
+-
+-        var totalAmount = rentalAmount + addonAmount + extraCharge + fuelCharge;
+-
+-        var invoice = new InvoiceHeader
+-        {
+-            InvoiceDate = DateTime.Now,
+-            HandoverDatetime = actualHandover,
+-            ReturnDatetime = actualReturn,
+-            HandoverFuelLevel = handoverFuelLevel,
+-            ReturnFuelLevel = returnFuelLevel,
+-            FuelCharge = fuelCharge,
+-            BookingId = header.BookingId,
+-            CustomerName = customer.FullName,
+-            Phone = customer.Phone,
+-            Email = customer.Email,
+-            VehicleNumber = car.VehicleNumber,
+-            PickupHub = header.PickupHubId,
+-            DropHub = header.DropHubId,
+-            RentalAmount = rentalAmount,
+-            AddonAmount = addonAmount,
+-            TotalAmount = totalAmount,
+-            PaymentType = request.PaymentType,
+-            // Assumes payment is settled at the return desk when a payment
+-            // type is given; otherwise left PENDING for a separate collection step.
+-            PaymentStatus = request.PaymentType is not null ? PaymentStatus.PAID : PaymentStatus.PENDING,
+-            ExtraMiles = request.ExtraMiles,
+-            ExtraChargeAmount = extraCharge,
+-            DamageNotes = request.DamageNotes,
+-            Days = days,
+-        };
+-        await _invoiceHeaders.AddAsync(invoice);
+-        await _invoiceHeaders.SaveChangesAsync();
+-
+-        invoice.PaymentReference = $"PAY-{invoice.InvoiceId}-{DateTimeOffset.UtcNow.ToUnixTimeMilliseconds().ToString()[9..]}";
+-        await _invoiceHeaders.SaveChangesAsync();
+-
+-        foreach (var line in lines)
+-        {
+-            // AddonId is a plain logical reference — look up the current
+-            // name fresh rather than trusting anything cached on the line.
+-            var addon = await _addons.GetByIdAsync(line.AddonId);
+-            await _invoiceDetails.AddAsync(new InvoiceDetail
+-            {
+-                InvoiceId = invoice.InvoiceId,
+-                AddonName = addon?.AddonName ?? string.Empty,
+-                Quantity = line.Quantity,
+-                AddonRate = line.AddonRate,
+-                Subtotal = (line.AddonRate ?? 0) * (line.Quantity ?? 0) * days,
+-            });
+-        }
+-        await _invoiceDetails.SaveChangesAsync();
+-
+-        header.BookingStatus = BookingStatus.COMPLETED;
+-
+-        // The "add one back to the category" step — this car goes back to
+-        // AVAILABLE, so it counts again everywhere fleet availability is computed.
+-        car.Status = CarStatus.AVAILABLE;
+-        car.IsAvailable = true;
+-        if (request.FuelStatus is not null) car.FuelLevel = request.FuelStatus;
+-        var extraMiles = request.ExtraMiles ?? 0;
+-        car.Odometer = (car.Odometer ?? 0) + extraMiles;
+-
+-        await _bookings.SaveChangesAsync();
+-
+-        try
+-        {
+-            var pdf = await _invoicePdfService.GenerateInvoiceAsync(invoice.InvoiceId);
+-            var bookingDto = await _bookingService.GetBookingByConfirmationAsync(confirmationNo);
+-            var invoiceDto = ToDto(invoice);
+-            await _emailService.SendBookingInvoiceAsync(customer.Email, customer.FullName, bookingDto, invoiceDto, pdf);
+-        }
+-        catch (Exception ex)
+-        {
+-            _logger.LogWarning(ex, "Failed to send return invoice email for {ConfirmationNo}", confirmationNo);
+-        }
+-
+-        return ToDto(invoice);
+-    }
+-
+-    public async Task<IReadOnlyList<CarDTO>> GetAvailableCarsForHandoverAsync(string confirmationNo)
+-    {
+-        var header = await FindHeaderAsync(confirmationNo);
+-        var cars = await _cars.FindAsync(c =>
+-            c.HubId == header.PickupHubId && c.CarTypeId == header.CarTypeId && c.Status == CarStatus.AVAILABLE);
+-
+-        var result = new List<CarDTO>();
+-        foreach (var car in cars) result.Add(await _vehicleService.GetCarByIdAsync(car.CarId));
+-        return result;
+-    }
+-
+-    public async Task<IReadOnlyList<BookingResponseDTO>> GetAllBookingsAsync()
+-    {
+-        // Reuses BookingService's own DTO builder rather than duplicating
+-        // that mapping here — one source of truth per entity type.
+-        var all = (await _bookings.GetAllAsync()).OrderByDescending(h => h.BookingDate).ToList();
+-        var result = new List<BookingResponseDTO>();
+-        foreach (var h in all) result.Add(await _bookingService.GetBookingByConfirmationAsync(h.ConfirmationNo));
+-        return result;
+-    }
+-
+-    public async Task<IReadOnlyList<CarTypeAvailabilityDTO>> GetDashboardAsync(long? hubId)
+-    {
+-        // The custom aggregate query does the actual counting in one
+-        // grouped query rather than pulling every Car row into memory.
+-        var counts = await _availability.CountByCarTypeAsync(hubId);
+-        var result = new List<CarTypeAvailabilityDTO>();
+-        foreach (var p in counts)
+-        {
+-            var carType = await _carTypes.GetByIdAsync(p.CarTypeId);
+-            result.Add(new CarTypeAvailabilityDTO
+-            {
+-                CarTypeId = p.CarTypeId,
+-                CarTypeName = carType?.CarTypeName ?? "Unknown",
+-                TotalCars = p.TotalCars,
+-                AvailableCars = p.AvailableCars,
+-                BookedCars = p.BookedCars,
+-                MaintenanceCars = p.MaintenanceCars,
+-            });
+-        }
+-        return result;
+-    }
+-
+-    private async Task<BookingHeader> FindHeaderAsync(string confirmationNo)
+-    {
+-        var lower = confirmationNo.ToLower();
+-        return await _bookings.FirstOrDefaultAsync(b => b.ConfirmationNo.ToLower() == lower)
+-            ?? throw new ResourceNotFoundException("No booking found for that confirmation number");
+-    }
+-
+-    private static int DaysBetween(DateTime pickup, DateTime returnDt)
+-    {
+-        var hours = (returnDt - pickup).TotalHours;
+-        var fullDays = (long)Math.Ceiling(hours / 24.0);
+-        return (int)Math.Max(1, fullDays);
+-    }
+-
+-    private static InvoiceResponseDTO ToDto(InvoiceHeader inv) => new()
+-    {
+-        InvoiceId = inv.InvoiceId,
+-        InvoiceDate = inv.InvoiceDate,
+-        BookingId = inv.BookingId,
+-        CustomerName = inv.CustomerName,
+-        Phone = inv.Phone,
+-        Email = inv.Email,
+-        VehicleNumber = inv.VehicleNumber,
+-        PickupHub = inv.PickupHub,
+-        DropHub = inv.DropHub,
+-        HandoverDatetime = inv.HandoverDatetime,
+-        ReturnDatetime = inv.ReturnDatetime,
+-        HandoverFuelLevel = inv.HandoverFuelLevel,
+-        ReturnFuelLevel = inv.ReturnFuelLevel,
+-        FuelCharge = inv.FuelCharge,
+-        RentalAmount = inv.RentalAmount,
+-        AddonAmount = inv.AddonAmount,
+-        TotalAmount = inv.TotalAmount,
+-        PaymentType = inv.PaymentType?.ToString(),
+-        PaymentReference = inv.PaymentReference,
+-        PaymentStatus = inv.PaymentStatus?.ToString(),
+-        ExtraMiles = inv.ExtraMiles,
+-        ExtraChargeAmount = inv.ExtraChargeAmount,
+-        DamageNotes = inv.DamageNotes,
+-        Days = inv.Days,
+-    };
+-}
++using System.Net;
++using FlemanApi.DTO;
++using FlemanApi.Exceptions;
++using FlemanApi.Models;
++using FlemanApi.Repository;
++using FlemanApi.Util;
++using Microsoft.Extensions.Logging;
++
++namespace FlemanApi.Service;
++
++// Mirrors com.fleman.service.impl.StaffServiceImpl.
++public class StaffService : IStaffService
++{
++    // Fuel level is stored in quarters of a tank: 25/50/75/100.
++    private const int FuelLevelPerQuarter = 25;
++    private const double FuelChargePerQuarter = 2.0;
++
++    private readonly IGenericRepository<BookingHeader, long> _bookings;
++    private readonly IGenericRepository<BookingDetail, long> _bookingDetails;
++    private readonly IGenericRepository<Car, long> _cars;
++    private readonly IGenericRepository<CarType, long> _carTypes;
++    private readonly IGenericRepository<Customer, long> _customers;
++    private readonly IGenericRepository<Addon, long> _addons;
++    private readonly IGenericRepository<InvoiceHeader, long> _invoiceHeaders;
++    private readonly IGenericRepository<InvoiceDetail, long> _invoiceDetails;
++    private readonly IAvailabilityRepository _availability;
++    private readonly IBookingService _bookingService;
++    private readonly IVehicleService _vehicleService;
++    private readonly IEmailService _emailService;
++    private readonly IInvoicePdfService _invoicePdfService;
++    private readonly ILogger<StaffService> _logger;
++    private readonly IPricingPolicySelector _pricingPolicySelector;
++    private readonly TimeProvider _timeProvider;
++
++    public StaffService(
++        IGenericRepository<BookingHeader, long> bookings,
++        IGenericRepository<BookingDetail, long> bookingDetails,
++        IGenericRepository<Car, long> cars,
++        IGenericRepository<CarType, long> carTypes,
++        IGenericRepository<Customer, long> customers,
++        IGenericRepository<Addon, long> addons,
++        IGenericRepository<InvoiceHeader, long> invoiceHeaders,
++        IGenericRepository<InvoiceDetail, long> invoiceDetails,
++        IAvailabilityRepository availability,
++        IBookingService bookingService,
++        IVehicleService vehicleService,
++        IEmailService emailService,
++        IInvoicePdfService invoicePdfService,
++        ILogger<StaffService> logger,
++        IPricingPolicySelector pricingPolicySelector,
++        TimeProvider timeProvider)
++    {
++        _bookings = bookings;
++        _bookingDetails = bookingDetails;
++        _cars = cars;
++        _carTypes = carTypes;
++        _customers = customers;
++        _addons = addons;
++        _invoiceHeaders = invoiceHeaders;
++        _invoiceDetails = invoiceDetails;
++        _availability = availability;
++        _bookingService = bookingService;
++        _vehicleService = vehicleService;
++        _emailService = emailService;
++        _invoicePdfService = invoicePdfService;
++        _logger = logger;
++        _pricingPolicySelector = pricingPolicySelector;
++        _timeProvider = timeProvider;
++    }
++
++    // Local wall-clock "now" via the injected clock. In production this is
++    // TimeProvider.System; in tests it can be a fixed fake so day-count
++    // arithmetic is deterministic and not subject to millisecond drift
++    // between the test's own DateTime.Now and the method's internal call.
++    private DateTime Now => _timeProvider.GetLocalNow().DateTime;
++
++    public async Task<BookingResponseDTO> HandoverVehicleAsync(string confirmationNo, HandoverRequest request)
++    {
++        var header = await FindHeaderAsync(confirmationNo);
++
++        if (header.CarId is not null)
++            throw new ApiException("This booking already has a vehicle handed over", HttpStatusCode.Conflict);
++        if (request.CarId is null)
++            throw new ApiException("Pick a vehicle to hand over", HttpStatusCode.BadRequest);
++
++        // The car staff picked must actually fit this booking — right hub,
++        // right reserved category, and physically free right now.
++        var car = await _cars.GetByIdAsync(request.CarId.Value)
++            ?? throw new ResourceNotFoundException($"Car not found: {request.CarId}");
++        if (car.HubId != header.PickupHubId)
++            throw new ApiException("That vehicle isn't at this booking's pickup hub", HttpStatusCode.Conflict);
++        if (car.CarTypeId != header.CarTypeId)
++            throw new ApiException("That vehicle isn't the reserved category for this booking", HttpStatusCode.Conflict);
++        if (car.Status != CarStatus.AVAILABLE)
++            throw new ApiException("That vehicle is no longer available", HttpStatusCode.Conflict);
++
++        car.Status = CarStatus.BOOKED;
++        car.IsAvailable = false;
++        if (request.FuelStatus is not null) car.FuelLevel = request.FuelStatus;
++
++        header.CarId = car.CarId;
++        header.BookingStatus = BookingStatus.ONGOING;
++        header.ActualHandoverDatetime = Now;
++        // Snapshot onto the booking — Car.FuelLevel gets overwritten again
++        // at return, so this is the only place the return-time fuel-
++        // shortfall charge can still read it from.
++        header.HandoverFuelLevel = car.FuelLevel;
++        if (!string.IsNullOrWhiteSpace(request.Notes))
++        {
++            var existing = header.Remarks ?? string.Empty;
++            header.Remarks = $"{existing} | Handover: {request.Notes}".Trim();
++        }
++
++        await _bookings.SaveChangesAsync();
++
++        return await _bookingService.GetBookingByConfirmationAsync(confirmationNo);
++    }
++
++    public async Task<InvoiceResponseDTO> ProcessReturnAsync(string confirmationNo, ProcessReturnRequest request)
++    {
++        var header = await FindHeaderAsync(confirmationNo);
++        if (header.CarId is null)
++            throw new ApiException("This booking hasn't been handed over yet — nothing to return", HttpStatusCode.Conflict);
++
++        var car = await _cars.GetByIdAsync(header.CarId.Value)
++            ?? throw new ResourceNotFoundException($"Car not found: {header.CarId}");
++        var carType = await _carTypes.GetByIdAsync(car.CarTypeId)
++            ?? throw new ResourceNotFoundException($"Car type not found: {car.CarTypeId}");
++        var customer = await _customers.GetByIdAsync(header.CustomerId)
++            ?? throw new ResourceNotFoundException($"Customer not found: {header.CustomerId}");
++        var lines = await _bookingDetails.FindAsync(d => d.BookingId == header.BookingId);
++
++        // Bill against what actually happened — hand-over time and right
++        // now — not the originally booked pickup/return window.
++        var actualHandover = header.ActualHandoverDatetime ?? header.PickupDatetime;
++        var actualReturn = Now;
++        header.ActualReturnDatetime = actualReturn;
++
++        var days = DaysBetween(actualHandover, actualReturn);
++
++        var selectedPolicy = _pricingPolicySelector.SelectPolicy(
++            carType,
++            actualHandover,
++            actualReturn);
++
++        var rentalAmount = selectedPolicy.CalculatePrice(
++            carType,
++            actualHandover,
++            actualReturn);
++
++        // Re-priced against the actual days billed, not the subtotal frozen
++        // on the line at booking time — an early return shortens rentalAmount
++        // above the same way, so add-ons need to shrink with it too instead
++        // of still billing for the originally planned (longer) stay.
++        var addonAmount = lines.Sum(l => (l.AddonRate ?? 0) * (l.Quantity ?? 0) * days);
++        var extraCharge = request.ExtraChargeAmount ?? 0.0;
++
++        // Fuel shortfall: tank tracked in quarters (25/50/75/100). Only
++        // charged when it comes back lower than handed over with.
++        var handoverFuelLevel = header.HandoverFuelLevel;
++        var returnFuelLevel = request.FuelStatus ?? car.FuelLevel;
++        var fuelQuartersShort = handoverFuelLevel is not null && returnFuelLevel is not null
++            ? Math.Max(0, (handoverFuelLevel.Value - returnFuelLevel.Value) / FuelLevelPerQuarter)
++            : 0;
++        var fuelCharge = fuelQuartersShort * FuelChargePerQuarter;
++
++        var totalAmount = rentalAmount + addonAmount + extraCharge + fuelCharge;
++
++        var invoice = new InvoiceHeader
++        {
++            InvoiceDate = Now,
++            HandoverDatetime = actualHandover,
++            ReturnDatetime = actualReturn,
++            HandoverFuelLevel = handoverFuelLevel,
++            ReturnFuelLevel = returnFuelLevel,
++            FuelCharge = fuelCharge,
++            BookingId = header.BookingId,
++            CustomerName = customer.FullName,
++            Phone = customer.Phone,
++            Email = customer.Email,
++            VehicleNumber = car.VehicleNumber,
++            PickupHub = header.PickupHubId,
++            DropHub = header.DropHubId,
++            RentalAmount = rentalAmount,
++            AddonAmount = addonAmount,
++            TotalAmount = totalAmount,
++            PaymentType = request.PaymentType,
++            // Assumes payment is settled at the return desk when a payment
++            // type is given; otherwise left PENDING for a separate collection step.
++            PaymentStatus = request.PaymentType is not null ? PaymentStatus.PAID : PaymentStatus.PENDING,
++            ExtraMiles = request.ExtraMiles,
++            ExtraChargeAmount = extraCharge,
++            DamageNotes = request.DamageNotes,
++            Days = days,
++        };
++        await _invoiceHeaders.AddAsync(invoice);
++        await _invoiceHeaders.SaveChangesAsync();
++
++        invoice.PaymentReference = $"PAY-{invoice.InvoiceId}-{DateTimeOffset.UtcNow.ToUnixTimeMilliseconds().ToString()[9..]}";
++        await _invoiceHeaders.SaveChangesAsync();
++
++        foreach (var line in lines)
++        {
++            // AddonId is a plain logical reference — look up the current
++            // name fresh rather than trusting anything cached on the line.
++            var addon = await _addons.GetByIdAsync(line.AddonId);
++            await _invoiceDetails.AddAsync(new InvoiceDetail
++            {
++                InvoiceId = invoice.InvoiceId,
++                AddonName = addon?.AddonName ?? string.Empty,
++                Quantity = line.Quantity,
++                AddonRate = line.AddonRate,
++                Subtotal = (line.AddonRate ?? 0) * (line.Quantity ?? 0) * days,
++            });
++        }
++        await _invoiceDetails.SaveChangesAsync();
++
++        header.BookingStatus = BookingStatus.COMPLETED;
++
++        // The "add one back to the category" step — this car goes back to
++        // AVAILABLE, so it counts again everywhere fleet availability is computed.
++        car.Status = CarStatus.AVAILABLE;
++        car.IsAvailable = true;
++        if (request.FuelStatus is not null) car.FuelLevel = request.FuelStatus;
++        var extraMiles = request.ExtraMiles ?? 0;
++        car.Odometer = (car.Odometer ?? 0) + extraMiles;
++
++        await _bookings.SaveChangesAsync();
++
++        try
++        {
++            var pdf = await _invoicePdfService.GenerateInvoiceAsync(invoice.InvoiceId);
++            var bookingDto = await _bookingService.GetBookingByConfirmationAsync(confirmationNo);
++            var invoiceDto = ToDto(invoice);
++            await _emailService.SendBookingInvoiceAsync(customer.Email, customer.FullName, bookingDto, invoiceDto, pdf);
++        }
++        catch (Exception ex)
++        {
++            _logger.LogWarning(ex, "Failed to send return invoice email for {ConfirmationNo}", confirmationNo);
++        }
++
++        return ToDto(invoice);
++    }
++
++    public async Task<IReadOnlyList<CarDTO>> GetAvailableCarsForHandoverAsync(string confirmationNo)
++    {
++        var header = await FindHeaderAsync(confirmationNo);
++        var cars = await _cars.FindAsync(c =>
++            c.HubId == header.PickupHubId && c.CarTypeId == header.CarTypeId && c.Status == CarStatus.AVAILABLE);
++
++        var result = new List<CarDTO>();
++        foreach (var car in cars) result.Add(await _vehicleService.GetCarByIdAsync(car.CarId));
++        return result;
++    }
++
++    public async Task<IReadOnlyList<BookingResponseDTO>> GetAllBookingsAsync()
++    {
++        // Reuses BookingService's own DTO builder rather than duplicating
++        // that mapping here — one source of truth per entity type.
++        var all = (await _bookings.GetAllAsync()).OrderByDescending(h => h.BookingDate).ToList();
++        var result = new List<BookingResponseDTO>();
++        foreach (var h in all) result.Add(await _bookingService.GetBookingByConfirmationAsync(h.ConfirmationNo));
++        return result;
++    }
++
++    public async Task<IReadOnlyList<CarTypeAvailabilityDTO>> GetDashboardAsync(long? hubId)
++    {
++        // The custom aggregate query does the actual counting in one
++        // grouped query rather than pulling every Car row into memory.
++        var counts = await _availability.CountByCarTypeAsync(hubId);
++        var result = new List<CarTypeAvailabilityDTO>();
++        foreach (var p in counts)
++        {
++            var carType = await _carTypes.GetByIdAsync(p.CarTypeId);
++            result.Add(new CarTypeAvailabilityDTO
++            {
++                CarTypeId = p.CarTypeId,
++                CarTypeName = carType?.CarTypeName ?? "Unknown",
++                TotalCars = p.TotalCars,
++                AvailableCars = p.AvailableCars,
++                BookedCars = p.BookedCars,
++                MaintenanceCars = p.MaintenanceCars,
++            });
++        }
++        return result;
++    }
++
++    private async Task<BookingHeader> FindHeaderAsync(string confirmationNo)
++    {
++        var lower = confirmationNo.ToLower();
++        return await _bookings.FirstOrDefaultAsync(b => b.ConfirmationNo.ToLower() == lower)
++            ?? throw new ResourceNotFoundException("No booking found for that confirmation number");
++    }
++
++    private static int DaysBetween(DateTime pickup, DateTime returnDt)
++    {
++        var hours = (returnDt - pickup).TotalHours;
++        var fullDays = (long)Math.Ceiling(hours / 24.0);
++        return (int)Math.Max(1, fullDays);
++    }
++
++    private static InvoiceResponseDTO ToDto(InvoiceHeader inv) => new()
++    {
++        InvoiceId = inv.InvoiceId,
++        InvoiceDate = inv.InvoiceDate,
++        BookingId = inv.BookingId,
++        CustomerName = inv.CustomerName,
++        Phone = inv.Phone,
++        Email = inv.Email,
++        VehicleNumber = inv.VehicleNumber,
++        PickupHub = inv.PickupHub,
++        DropHub = inv.DropHub,
++        HandoverDatetime = inv.HandoverDatetime,
++        ReturnDatetime = inv.ReturnDatetime,
++        HandoverFuelLevel = inv.HandoverFuelLevel,
++        ReturnFuelLevel = inv.ReturnFuelLevel,
++        FuelCharge = inv.FuelCharge,
++        RentalAmount = inv.RentalAmount,
++        AddonAmount = inv.AddonAmount,
++        TotalAmount = inv.TotalAmount,
++        PaymentType = inv.PaymentType?.ToString(),
++        PaymentReference = inv.PaymentReference,
++        PaymentStatus = inv.PaymentStatus?.ToString(),
++        ExtraMiles = inv.ExtraMiles,
++        ExtraChargeAmount = inv.ExtraChargeAmount,
++        DamageNotes = inv.DamageNotes,
++        Days = inv.Days,
++    };
++}
+\ No newline at end of file
+diff --git a/WanderCar_DotNet/src/FlemanApi/Util/RentalRateCalculator.cs b/WanderCar_DotNet/src/FlemanApi/Util/RentalRateCalculator.cs
+index d64f724..d37361a 100644
+--- a/WanderCar_DotNet/src/FlemanApi/Util/RentalRateCalculator.cs
++++ b/WanderCar_DotNet/src/FlemanApi/Util/RentalRateCalculator.cs
+@@ -1,36 +1,36 @@
+-using FlemanApi.Models;
+-
+-namespace FlemanApi.Util;
+-
+-// Shared by BookingService (booking-time estimate) and StaffService (the
+-// actual return invoice) so both price a rental the same way: pack whole
+-// months first, then whole weeks out of what's left, then bill the
+-// remaining days at the daily rate.
+-public static class RentalRateCalculator
+-{
+-    public static double CalculateRentalAmount(CarType carType, int days)
+-    {
+-        var dailyRate = carType.DailyRate;
+-        var weeklyRate = carType.WeeklyRate ?? 0.0;
+-        var monthlyRate = carType.MonthlyRate ?? 0.0;
+-
+-        var remainingDays = days;
+-        var amount = 0.0;
+-
+-        if (monthlyRate > 0 && remainingDays >= 30)
+-        {
+-            var months = remainingDays / 30;
+-            amount += months * monthlyRate;
+-            remainingDays %= 30;
+-        }
+-        if (weeklyRate > 0 && remainingDays >= 7)
+-        {
+-            var weeks = remainingDays / 7;
+-            amount += weeks * weeklyRate;
+-            remainingDays %= 7;
+-        }
+-        amount += remainingDays * dailyRate;
+-
+-        return amount;
+-    }
+-}
++using FlemanApi.Models;
++
++namespace FlemanApi.Util;
++
++// Shared by BookingService (booking-time estimate) and StaffService (the
++// actual return invoice) so both price a rental the same way: pack whole
++// months first, then whole weeks out of what's left, then bill the
++// remaining days at the daily rate.
++public static class RentalRateCalculator
++{
++    public static double CalculateRentalAmount(CarType carType, int days)
++    {
++        var dailyRate = carType.DailyRate;
++        var weeklyRate = carType.WeeklyRate ?? 0.0;
++        var monthlyRate = carType.MonthlyRate ?? 0.0;
++
++        var remainingDays = days;
++        var amount = 0.0;
++
++        if (monthlyRate > 0 && remainingDays >= 30)
++        {
++            var months = remainingDays / 30;
++            amount += months * monthlyRate;
++            remainingDays %= 30;
++        }
++        if (weeklyRate > 0 && remainingDays >= 7)
++        {
++            var weeks = remainingDays / 7;
++            amount += weeks * weeklyRate;
++            remainingDays %= 7;
++        }
++        amount += remainingDays * dailyRate;
++
++        return amount;
++    }
++}
+
+diff --git a/WanderCar_DotNet/src/FlemanApi/Util/IPricingPolicy.cs b/WanderCar_DotNet/src/FlemanApi/Util/IPricingPolicy.cs
+new file mode 100644
+index 0000000..218b368
+--- /dev/null
++++ b/WanderCar_DotNet/src/FlemanApi/Util/IPricingPolicy.cs
+@@ -0,0 +1,14 @@
++
++using FlemanApi.Models;
++
++namespace FlemanApi.Util;
++
++public interface IPricingPolicy
++{
++    string Name { get; }
++
++    double CalculatePrice(
++        CarType carType,
++        DateTime pickupDate,
++        DateTime returnDate);
++}
+
+diff --git a/WanderCar_DotNet/src/FlemanApi/Util/IPricingPolicySelector.cs b/WanderCar_DotNet/src/FlemanApi/Util/IPricingPolicySelector.cs
+new file mode 100644
+index 0000000..07c0528
+--- /dev/null
++++ b/WanderCar_DotNet/src/FlemanApi/Util/IPricingPolicySelector.cs
+@@ -0,0 +1,12 @@
++
++using FlemanApi.Models;
++
++namespace FlemanApi.Util;
++
++public interface IPricingPolicySelector
++{
++    IPricingPolicy SelectPolicy(
++        CarType carType,
++        DateTime pickupDate,
++        DateTime returnDate);
++}
+
+diff --git a/WanderCar_DotNet/src/FlemanApi/Util/PricingPolicySelector.cs b/WanderCar_DotNet/src/FlemanApi/Util/PricingPolicySelector.cs
+new file mode 100644
+index 0000000..d16408b
+--- /dev/null
++++ b/WanderCar_DotNet/src/FlemanApi/Util/PricingPolicySelector.cs
+@@ -0,0 +1,46 @@
++
++using FlemanApi.Models;
++using Microsoft.Extensions.Options;
++
++namespace FlemanApi.Util;
++
++public sealed class PricingPolicySelector : IPricingPolicySelector
++{
++    private readonly IPricingPolicy _standard;
++    private readonly IPricingPolicy _weekend;
++    private readonly IPricingPolicy _seasonal;
++    private readonly PricingSettings _settings;
++
++    public PricingPolicySelector(
++        StandardPricingPolicy standard,
++        WeekendPricingPolicy weekend,
++        SeasonalPricingPolicy seasonal,
++        IOptions<PricingSettings> options)
++    {
++        _standard = standard;
++        _weekend = weekend;
++        _seasonal = seasonal;
++        _settings = options.Value;
++    }
++
++    public IPricingPolicy SelectPolicy(
++        CarType carType,
++        DateTime pickupDate,
++        DateTime returnDate)
++    {
++        if (_settings.PeakMonths.Contains(pickupDate.Month))
++        {
++            return _seasonal;
++        }
++
++        for (var date = pickupDate.Date; date < returnDate.Date; date = date.AddDays(1))
++        {
++            if (date.DayOfWeek is DayOfWeek.Saturday or DayOfWeek.Sunday)
++            {
++                return _weekend;
++            }
++        }
++
++        return _standard;
++    }
++}
+
+diff --git a/WanderCar_DotNet/src/FlemanApi/Util/PricingSettings.cs b/WanderCar_DotNet/src/FlemanApi/Util/PricingSettings.cs
+new file mode 100644
+index 0000000..515d716
+--- /dev/null
++++ b/WanderCar_DotNet/src/FlemanApi/Util/PricingSettings.cs
+@@ -0,0 +1,16 @@
++
++namespace FlemanApi.Util;
++
++public class PricingSettings
++{
++    public const string SectionName = "PricingSettings";
++
++    // Extra percentage applied to rentals that include weekend days.
++    public double WeekendSurchargePercent { get; set; } = 20.0;
++
++    // Extra percentage applied when the pickup date is in a peak month.
++    public double SeasonalSurchargePercent { get; set; } = 30.0;
++
++    // Calendar months considered peak season (1 = January, 12 = December).
++    public int[] PeakMonths { get; set; } = [12, 1, 4];
++}
+
+diff --git a/WanderCar_DotNet/src/FlemanApi/Util/RentalDurationCalculator.cs b/WanderCar_DotNet/src/FlemanApi/Util/RentalDurationCalculator.cs
+new file mode 100644
+index 0000000..28246e4
+--- /dev/null
++++ b/WanderCar_DotNet/src/FlemanApi/Util/RentalDurationCalculator.cs
+@@ -0,0 +1,13 @@
++
++namespace FlemanApi.Util;
++
++public static class RentalDurationCalculator
++{
++    public static int DaysBetween(DateTime pickup, DateTime returnDate)
++    {
++        var hours = (returnDate - pickup).TotalHours;
++        var fullDays = (long)Math.Ceiling(hours / 24.0);
++
++        return (int)Math.Max(1, fullDays);
++    }
++}
+
+diff --git a/WanderCar_DotNet/src/FlemanApi/Util/StandardPricingPolicy.cs b/WanderCar_DotNet/src/FlemanApi/Util/StandardPricingPolicy.cs
+new file mode 100644
+index 0000000..0990cad
+--- /dev/null
++++ b/WanderCar_DotNet/src/FlemanApi/Util/StandardPricingPolicy.cs
+@@ -0,0 +1,27 @@
++using FlemanApi.Models;
++
++namespace FlemanApi.Util;
++
++public sealed class StandardPricingPolicy : IPricingPolicy
++{
++    public string Name => "Standard";
++
++    public double CalculatePrice(
++        CarType carType,
++        DateTime pickupDate,
++        DateTime returnDate)
++    {
++        if (returnDate <= pickupDate)
++        {
++            return 0.0;
++        }
++
++        var days = RentalDurationCalculator.DaysBetween(
++            pickupDate,
++            returnDate);
++
++        return RentalRateCalculator.CalculateRentalAmount(
++            carType,
++            days);
++    }
++}
+\ No newline at end of file
+
+diff --git a/WanderCar_DotNet/src/FlemanApi/Util/WeekendPricingPolicy.cs b/WanderCar_DotNet/src/FlemanApi/Util/WeekendPricingPolicy.cs
+new file mode 100644
+index 0000000..ae55f6e
+--- /dev/null
++++ b/WanderCar_DotNet/src/FlemanApi/Util/WeekendPricingPolicy.cs
+@@ -0,0 +1,51 @@
++using FlemanApi.Models;
++using Microsoft.Extensions.Options;
++
++namespace FlemanApi.Util;
++
++public sealed class WeekendPricingPolicy : IPricingPolicy
++{
++    private readonly PricingSettings _settings;
++
++    public WeekendPricingPolicy(IOptions<PricingSettings> options)
++    {
++        _settings = options.Value;
++    }
++
++    public string Name => "Weekend";
++
++    public double CalculatePrice(
++        CarType carType,
++        DateTime pickupDate,
++        DateTime returnDate)
++    {
++        var days = RentalDurationCalculator.DaysBetween(
++            pickupDate,
++            returnDate);
++
++        var standardPrice =
++            RentalRateCalculator.CalculateRentalAmount(carType, days);
++
++        var weekendDays = 0;
++        var currentDate = pickupDate.Date;
++
++        while (currentDate < returnDate.Date)
++        {
++            if (currentDate.DayOfWeek is DayOfWeek.Saturday
++                or DayOfWeek.Sunday)
++            {
++                weekendDays++;
++            }
++
++            currentDate = currentDate.AddDays(1);
++        }
++
++        if (weekendDays == 0)
++        {
++            return standardPrice;
++        }
++
++        return standardPrice *
++               (1 + _settings.WeekendSurchargePercent / 100.0);
++    }
++}
+\ No newline at end of file
+
+diff --git a/WanderCar_DotNet/src/FlemanApi/Util/SeasonalPricingPolicy.cs b/WanderCar_DotNet/src/FlemanApi/Util/SeasonalPricingPolicy.cs
+new file mode 100644
+index 0000000..4653133
+--- /dev/null
++++ b/WanderCar_DotNet/src/FlemanApi/Util/SeasonalPricingPolicy.cs
+@@ -0,0 +1,37 @@
++using FlemanApi.Models;
++using Microsoft.Extensions.Options;
++
++namespace FlemanApi.Util;
++
++public sealed class SeasonalPricingPolicy : IPricingPolicy
++{
++    private readonly PricingSettings _settings;
++
++    public SeasonalPricingPolicy(IOptions<PricingSettings> options)
++    {
++        _settings = options.Value;
++    }
++
++    public string Name => "Seasonal";
++
++    public double CalculatePrice(
++        CarType carType,
++        DateTime pickupDate,
++        DateTime returnDate)
++    {
++        var days = RentalDurationCalculator.DaysBetween(
++            pickupDate,
++            returnDate);
++
++        var standardPrice =
++            RentalRateCalculator.CalculateRentalAmount(carType, days);
++
++        if (!_settings.PeakMonths.Contains(pickupDate.Month))
++        {
++            return standardPrice;
++        }
++
++        return standardPrice *
++               (1 + _settings.SeasonalSurchargePercent / 100.0);
++    }
++}
+\ No newline at end of file
+
+diff --git a/WanderCar_DotNet/src/FlemanApi.Tests/Util/StandardPricingPolicyTests.cs b/WanderCar_DotNet/src/FlemanApi.Tests/Util/StandardPricingPolicyTests.cs
+new file mode 100644
+index 0000000..8bdd6d4
+--- /dev/null
++++ b/WanderCar_DotNet/src/FlemanApi.Tests/Util/StandardPricingPolicyTests.cs
+@@ -0,0 +1,90 @@
++
++using FlemanApi.Models;
++using FlemanApi.Util;
++using FluentAssertions;
++using NUnit.Framework;
++
++namespace FlemanApi.Tests.Util;
++
++[TestFixture]
++public class StandardPricingPolicyTests
++{
++    private readonly StandardPricingPolicy _policy = new();
++
++    private static CarType MakeCarType(
++        double daily = 100.0,
++        double? weekly = 600.0,
++        double? monthly = 2000.0)
++    {
++        return new CarType
++        {
++            CarTypeId = 1,
++            CarTypeName = "Sedan",
++            DailyRate = daily,
++            WeeklyRate = weekly,
++            MonthlyRate = monthly
++        };
++    }
++
++    [TestCase(0)]
++    [TestCase(1)]
++    [TestCase(5)]
++    [TestCase(6)]
++    [TestCase(7)]
++    [TestCase(10)]
++    [TestCase(29)]
++    [TestCase(30)]
++    [TestCase(35)]
++    [TestCase(37)]
++    [TestCase(60)]
++    [TestCase(90)]
++    public void StandardPricing_MatchesBaseline(int days)
++    {
++        var carType = MakeCarType();
++        var pickup = new DateTime(2026, 10, 5, 10, 0, 0);
++        var returnDate = pickup.AddDays(days);
++
++        var expected =
++            RentalRateCalculator.CalculateRentalAmount(carType, days);
++
++        var actual = _policy.CalculatePrice(carType, pickup, returnDate);
++
++        actual.Should().Be(expected);
++    }
++
++    [Test]
++    public void StandardPricing_WithNullRates_MatchesBaseline()
++    {
++        var carType = MakeCarType(weekly: null, monthly: null);
++        var pickup = new DateTime(2026, 10, 5);
++        var returnDate = pickup.AddDays(15);
++
++        var expected =
++            RentalRateCalculator.CalculateRentalAmount(carType, 15);
++
++        var actual = _policy.CalculatePrice(carType, pickup, returnDate);
++
++        actual.Should().Be(expected);
++    }
++
++    [Test]
++    public void StandardPricing_WithZeroRates_MatchesBaseline()
++    {
++        var carType = MakeCarType(weekly: 0, monthly: 0);
++        var pickup = new DateTime(2026, 10, 5);
++        var returnDate = pickup.AddDays(10);
++
++        var expected =
++            RentalRateCalculator.CalculateRentalAmount(carType, 10);
++
++        var actual = _policy.CalculatePrice(carType, pickup, returnDate);
++
++        actual.Should().Be(expected);
++    }
++
++    [Test]
++    public void StandardPricing_HasCorrectName()
++    {
++        _policy.Name.Should().Be("Standard");
++    }
++}
+
+diff --git a/WanderCar_DotNet/src/FlemanApi.Tests/Util/PricingPolicyTests.cs b/WanderCar_DotNet/src/FlemanApi.Tests/Util/PricingPolicyTests.cs
+new file mode 100644
+index 0000000..94149f8
+--- /dev/null
++++ b/WanderCar_DotNet/src/FlemanApi.Tests/Util/PricingPolicyTests.cs
+@@ -0,0 +1,148 @@
++
++using FlemanApi.Models;
++using FlemanApi.Util;
++using FluentAssertions;
++using Microsoft.Extensions.Options;
++using NUnit.Framework;
++
++namespace FlemanApi.Tests.Util;
++
++[TestFixture]
++public class PricingPolicyTests
++{
++    private static CarType MakeCarType() => new()
++    {
++        CarTypeId = 1,
++        CarTypeName = "Sedan",
++        DailyRate = 100,
++        WeeklyRate = 600,
++        MonthlyRate = 2000
++    };
++
++    private static IOptions<PricingSettings> MakeOptions() =>
++        Options.Create(new PricingSettings
++        {
++            WeekendSurchargePercent = 20,
++            SeasonalSurchargePercent = 30,
++            PeakMonths = [12, 1, 4]
++        });
++
++    [Test]
++    public void WeekendPolicy_AddsSurcharge_WhenRentalIncludesWeekend()
++    {
++        var policy = new WeekendPricingPolicy(MakeOptions());
++        var car = MakeCarType();
++
++        // Friday to Monday: three rental days, including Saturday and Sunday.
++        var pickup = new DateTime(2026, 10, 9);
++        var returnDate = new DateTime(2026, 10, 12);
++
++        var actual = policy.CalculatePrice(car, pickup, returnDate);
++
++        actual.Should().Be(360); // Standard 300 + 20% surcharge.
++    }
++
++    [Test]
++    public void WeekendPolicy_DoesNotAddSurcharge_WhenNoWeekendIncluded()
++    {
++        var policy = new WeekendPricingPolicy(MakeOptions());
++        var car = MakeCarType();
++
++        // Monday to Thursday.
++        var pickup = new DateTime(2026, 10, 5);
++        var returnDate = new DateTime(2026, 10, 8);
++
++        var actual = policy.CalculatePrice(car, pickup, returnDate);
++
++        actual.Should().Be(300);
++    }
++
++    [Test]
++    public void SeasonalPolicy_AddsSurcharge_WhenPickupMonthIsPeak()
++    {
++        var policy = new SeasonalPricingPolicy(MakeOptions());
++        var car = MakeCarType();
++
++        var pickup = new DateTime(2026, 12, 7);
++        var returnDate = new DateTime(2026, 12, 10);
++
++        var actual = policy.CalculatePrice(car, pickup, returnDate);
++
++        actual.Should().Be(390); // Standard 300 + 30% surcharge.
++    }
++
++    [Test]
++    public void SeasonalPolicy_DoesNotAddSurcharge_WhenPickupMonthIsNotPeak()
++    {
++        var policy = new SeasonalPricingPolicy(MakeOptions());
++        var car = MakeCarType();
++
++        var pickup = new DateTime(2026, 10, 5);
++        var returnDate = new DateTime(2026, 10, 8);
++
++        var actual = policy.CalculatePrice(car, pickup, returnDate);
++
++        actual.Should().Be(300);
++    }
++
++    [Test]
++    public void Selector_ChoosesSeasonalBeforeWeekend()
++    {
++        var options = MakeOptions();
++
++        var selector = new PricingPolicySelector(
++            new StandardPricingPolicy(),
++            new WeekendPricingPolicy(options),
++            new SeasonalPricingPolicy(options),
++            options);
++
++        // Peak month and weekend: seasonal takes priority.
++        var pickup = new DateTime(2026, 12, 11);
++        var returnDate = new DateTime(2026, 12, 14);
++
++        var actual = selector.SelectPolicy(
++            MakeCarType(), pickup, returnDate);
++
++        actual.Name.Should().Be("Seasonal");
++    }
++
++    [Test]
++    public void Selector_ChoosesWeekend_WhenNotPeakButWeekendIncluded()
++    {
++        var options = MakeOptions();
++
++        var selector = new PricingPolicySelector(
++            new StandardPricingPolicy(),
++            new WeekendPricingPolicy(options),
++            new SeasonalPricingPolicy(options),
++            options);
++
++        var pickup = new DateTime(2026, 10, 9);
++        var returnDate = new DateTime(2026, 10, 12);
++
++        var actual = selector.SelectPolicy(
++            MakeCarType(), pickup, returnDate);
++
++        actual.Name.Should().Be("Weekend");
++    }
++
++    [Test]
++    public void Selector_ChoosesStandard_WhenNeitherConditionApplies()
++    {
++        var options = MakeOptions();
++
++        var selector = new PricingPolicySelector(
++            new StandardPricingPolicy(),
++            new WeekendPricingPolicy(options),
++            new SeasonalPricingPolicy(options),
++            options);
++
++        var pickup = new DateTime(2026, 10, 5);
++        var returnDate = new DateTime(2026, 10, 8);
++
++        var actual = selector.SelectPolicy(
++            MakeCarType(), pickup, returnDate);
++
++        actual.Name.Should().Be("Standard");
++    }
++}

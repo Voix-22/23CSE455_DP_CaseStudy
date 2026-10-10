@@ -1,0 +1,23 @@
+
+Pricing Strategy production files:
+- WanderCar_DotNet/src/FlemanApi/Util/IPricingPolicy.cs (new)
+- WanderCar_DotNet/src/FlemanApi/Util/IPricingPolicySelector.cs (new)
+- WanderCar_DotNet/src/FlemanApi/Util/PricingPolicySelector.cs (new)
+- WanderCar_DotNet/src/FlemanApi/Util/PricingSettings.cs (new)
+- WanderCar_DotNet/src/FlemanApi/Util/RentalDurationCalculator.cs (new)
+- WanderCar_DotNet/src/FlemanApi/Util/StandardPricingPolicy.cs (new)
+- WanderCar_DotNet/src/FlemanApi/Util/WeekendPricingPolicy.cs (new)
+- WanderCar_DotNet/src/FlemanApi/Util/SeasonalPricingPolicy.cs (new)
+- WanderCar_DotNet/src/FlemanApi/Util/RentalRateCalculator.cs (existing calculator retained)
+- WanderCar_DotNet/src/FlemanApi/Service/BookingService.cs (policy selector integration)
+- WanderCar_DotNet/src/FlemanApi/Service/StaffService.cs (policy selector integration)
+- WanderCar_DotNet/src/FlemanApi/Program.cs (settings and dependency-injection registrations)
+
+Related tests in supplied working tree:
+- WanderCar_DotNet/src/FlemanApi.Tests/Util/StandardPricingPolicyTests.cs (new)
+- WanderCar_DotNet/src/FlemanApi.Tests/Util/PricingPolicyTests.cs (new)
+- WanderCar_DotNet/src/FlemanApi.Tests/Util/RentalRateCalculatorTests.cs (existing tests retained/modified)
+- WanderCar_DotNet/src/FlemanApi.Tests/Services/BookingServiceTests.cs (constructor/test wiring changes)
+- WanderCar_DotNet/src/FlemanApi.Tests/Services/StaffServiceTests.cs (constructor/test wiring changes)
+
+Important: the supplied ZIP has unrelated modified files too. Review `git status --short` before staging so CH02 commits do not accidentally include unrelated frontend, authentication, Java backend, or configuration changes.

@@ -1,0 +1,23 @@
+
+CH02 test evidence transcribed from user-provided terminal output (not independently rerun by this assistant).
+
+1. Baseline run, before Strategy integration:
+Command:
+dotnet test .\WanderCar_DotNet\src\FlemanApi.Tests
+Result:
+Failed: 1, Passed: 182, Skipped: 0, Total: 183.
+Failure: `StaffServiceTests.ProcessReturnAsync_CreatesInvoiceHeaderAndDetails` expected AddonAmount 40.0 but observed 710.0. This failure was present before the pricing-policy integration, according to the captured baseline run.
+
+2. Pricing policy tests:
+Command:
+dotnet test .\WanderCar_DotNet\src\FlemanApi.Tests --filter "FullyQualifiedName~PricingPolicyTests"
+Result:
+Passed: 22, Failed: 0, Skipped: 0, Total: 22.
+
+3. Final full suite:
+Command:
+dotnet test .\WanderCar_DotNet\src\FlemanApi.Tests
+Result:
+Passed: 205, Failed: 0, Skipped: 0, Total: 205, Duration: 4 s.
+
+These are user-provided terminal results. Before submission, rerun the full test suite on the exact commit being submitted and save the fresh unedited console output.

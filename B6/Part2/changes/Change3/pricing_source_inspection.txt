@@ -1,0 +1,247 @@
+PS D:\2025-2026\s7\DESIGN PATTERNS\project\FleetManagment> Get-Content .\WanderCar_DotNet\src\FlemanApi\Util\RentalRateCalculator.cs
+using FlemanApi.Models;
+
+namespace FlemanApi.Util;
+
+// Shared by BookingService (booking-time estimate) and StaffService (the
+// actual return invoice) so both price a rental the same way: pack whole
+// months first, then whole weeks out of what's left, then bill the
+// remaining days at the daily rate.
+public static class RentalRateCalculator
+{
+    public static double CalculateRentalAmount(CarType carType, int days)
+    {
+        var dailyRate = carType.DailyRate;
+        var weeklyRate = carType.WeeklyRate ?? 0.0;
+        var monthlyRate = carType.MonthlyRate ?? 0.0;
+
+        var remainingDays = days;
+        var amount = 0.0;
+
+        if (monthlyRate > 0 && remainingDays >= 30)
+        {
+            var months = remainingDays / 30;
+            amount += months * monthlyRate;
+            remainingDays %= 30;
+        }
+        if (weeklyRate > 0 && remainingDays >= 7)
+        {
+            var weeks = remainingDays / 7;
+            amount += weeks * weeklyRate;
+            remainingDays %= 7;
+        }
+        amount += remainingDays * dailyRate;
+
+        return amount;
+    }
+}
+PS D:\2025-2026\s7\DESIGN PATTERNS\project\FleetManagment> Select-String -Path .\WanderCar_DotNet\src\FlemanApi\Service\BookingService.cs -Pattern "RentalRateCalculator|DaysBetween|CreateBookingAsync|ModifyBookingAsync" -Context 5,10
+
+  WanderCar_DotNet\src\FlemanApi\Service\BookingService.cs:73:        _emailService = emailService;
+  WanderCar_DotNet\src\FlemanApi\Service\BookingService.cs:74:        _currentUser = currentUser;
+  WanderCar_DotNet\src\FlemanApi\Service\BookingService.cs:75:        _logger = logger;
+  WanderCar_DotNet\src\FlemanApi\Service\BookingService.cs:76:    }
+  WanderCar_DotNet\src\FlemanApi\Service\BookingService.cs:77:
+> WanderCar_DotNet\src\FlemanApi\Service\BookingService.cs:78:    public async Task<BookingResponseDTO> 
+CreateBookingAsync(CreateBookingRequest request)
+  WanderCar_DotNet\src\FlemanApi\Service\BookingService.cs:79:    {
+  WanderCar_DotNet\src\FlemanApi\Service\BookingService.cs:80:        _logger.LogInformation("Booking process 
+started");
+  WanderCar_DotNet\src\FlemanApi\Service\BookingService.cs:81:
+  WanderCar_DotNet\src\FlemanApi\Service\BookingService.cs:82:        long customerId;
+  WanderCar_DotNet\src\FlemanApi\Service\BookingService.cs:83:        if (_currentUser.IsAuthenticated)
+  WanderCar_DotNet\src\FlemanApi\Service\BookingService.cs:84:        {
+  WanderCar_DotNet\src\FlemanApi\Service\BookingService.cs:85:            if (_currentUser.GetCurrentRole() == 
+"STAFF")
+  WanderCar_DotNet\src\FlemanApi\Service\BookingService.cs:86:            {
+  WanderCar_DotNet\src\FlemanApi\Service\BookingService.cs:87:                if (request.CustomerId is null) throw 
+new ApiException("Customer is required.", HttpStatusCode.BadRequest);
+  WanderCar_DotNet\src\FlemanApi\Service\BookingService.cs:88:                customerId = request.CustomerId.Value;
+  WanderCar_DotNet\src\FlemanApi\Service\BookingService.cs:133:            ReturnDatetime = 
+request.ReturnDatetime.Value,
+  WanderCar_DotNet\src\FlemanApi\Service\BookingService.cs:134:            BookingStatus = BookingStatus.CONFIRMED,
+  WanderCar_DotNet\src\FlemanApi\Service\BookingService.cs:135:            Remarks = request.Remarks ?? string.Empty,
+  WanderCar_DotNet\src\FlemanApi\Service\BookingService.cs:136:        };
+  WanderCar_DotNet\src\FlemanApi\Service\BookingService.cs:137:
+> WanderCar_DotNet\src\FlemanApi\Service\BookingService.cs:138:        var days = 
+DaysBetween(request.PickupDatetime.Value, request.ReturnDatetime.Value);
+> WanderCar_DotNet\src\FlemanApi\Service\BookingService.cs:139:        var rentalAmount = 
+RentalRateCalculator.CalculateRentalAmount(carType, days);
+  WanderCar_DotNet\src\FlemanApi\Service\BookingService.cs:140:
+  WanderCar_DotNet\src\FlemanApi\Service\BookingService.cs:141:        await _bookings.AddAsync(header);
+  WanderCar_DotNet\src\FlemanApi\Service\BookingService.cs:142:        await _bookings.SaveChangesAsync();
+  WanderCar_DotNet\src\FlemanApi\Service\BookingService.cs:143:
+  WanderCar_DotNet\src\FlemanApi\Service\BookingService.cs:144:        var addonAmount = 0.0;
+  WanderCar_DotNet\src\FlemanApi\Service\BookingService.cs:145:        if (request.Addons is not null)
+  WanderCar_DotNet\src\FlemanApi\Service\BookingService.cs:146:        {
+  WanderCar_DotNet\src\FlemanApi\Service\BookingService.cs:147:            foreach (var line in request.Addons)
+  WanderCar_DotNet\src\FlemanApi\Service\BookingService.cs:148:            {
+  WanderCar_DotNet\src\FlemanApi\Service\BookingService.cs:149:                var addon = line.AddonId is null ? 
+null : await _addons.GetByIdAsync(line.AddonId.Value);
+  WanderCar_DotNet\src\FlemanApi\Service\BookingService.cs:218:        var result = new List<BookingResponseDTO>();
+  WanderCar_DotNet\src\FlemanApi\Service\BookingService.cs:219:        foreach (var h in mine) result.Add(await 
+ToResponseDtoAsync(h));
+  WanderCar_DotNet\src\FlemanApi\Service\BookingService.cs:220:        return result;
+  WanderCar_DotNet\src\FlemanApi\Service\BookingService.cs:221:    }
+  WanderCar_DotNet\src\FlemanApi\Service\BookingService.cs:222:
+> WanderCar_DotNet\src\FlemanApi\Service\BookingService.cs:223:    public async Task<BookingResponseDTO> 
+ModifyBookingAsync(string confirmationNo, ModifyBookingRequest request)
+  WanderCar_DotNet\src\FlemanApi\Service\BookingService.cs:224:    {
+  WanderCar_DotNet\src\FlemanApi\Service\BookingService.cs:225:        var header = await 
+FindHeaderAsync(confirmationNo);
+  WanderCar_DotNet\src\FlemanApi\Service\BookingService.cs:226:        ValidateBookingAccess(header);
+  WanderCar_DotNet\src\FlemanApi\Service\BookingService.cs:227:
+  WanderCar_DotNet\src\FlemanApi\Service\BookingService.cs:228:        // Once a real car has been handed to the 
+customer, the pickup leg
+  WanderCar_DotNet\src\FlemanApi\Service\BookingService.cs:229:        // is history — only the still-pending return 
+leg may still change.
+  WanderCar_DotNet\src\FlemanApi\Service\BookingService.cs:230:        var pickupHubChanged = request.PickupHubId is 
+not null && request.PickupHubId != header.PickupHubId;
+  WanderCar_DotNet\src\FlemanApi\Service\BookingService.cs:231:        var pickupTimeChanged = 
+request.PickupDatetime is not null && request.PickupDatetime != header.PickupDatetime;
+  WanderCar_DotNet\src\FlemanApi\Service\BookingService.cs:232:        if ((pickupHubChanged || pickupTimeChanged) 
+&& header.CarId is not null)
+  WanderCar_DotNet\src\FlemanApi\Service\BookingService.cs:233:        {
+  WanderCar_DotNet\src\FlemanApi\Service\BookingService.cs:279:        if (request.Addons is not null && 
+header.CarId is not null)
+  WanderCar_DotNet\src\FlemanApi\Service\BookingService.cs:280:        {
+  WanderCar_DotNet\src\FlemanApi\Service\BookingService.cs:281:            throw new ApiException("Vehicle has 
+already been handed over — add-ons can no longer be changed", HttpStatusCode.Conflict);
+  WanderCar_DotNet\src\FlemanApi\Service\BookingService.cs:282:        }
+  WanderCar_DotNet\src\FlemanApi\Service\BookingService.cs:283:
+> WanderCar_DotNet\src\FlemanApi\Service\BookingService.cs:284:        var days = DaysBetween(header.PickupDatetime, 
+header.ReturnDatetime);
+  WanderCar_DotNet\src\FlemanApi\Service\BookingService.cs:285:        double addonAmount;
+  WanderCar_DotNet\src\FlemanApi\Service\BookingService.cs:286:        if (request.Addons is not null)
+  WanderCar_DotNet\src\FlemanApi\Service\BookingService.cs:287:        {
+  WanderCar_DotNet\src\FlemanApi\Service\BookingService.cs:288:            var existingLines = await 
+_bookingDetails.FindAsync(d => d.BookingId == header.BookingId);
+  WanderCar_DotNet\src\FlemanApi\Service\BookingService.cs:289:            foreach (var line in existingLines) 
+_bookingDetails.Remove(line);
+  WanderCar_DotNet\src\FlemanApi\Service\BookingService.cs:290:
+  WanderCar_DotNet\src\FlemanApi\Service\BookingService.cs:291:            var total = 0.0;
+  WanderCar_DotNet\src\FlemanApi\Service\BookingService.cs:292:            foreach (var line in request.Addons)
+  WanderCar_DotNet\src\FlemanApi\Service\BookingService.cs:293:            {
+  WanderCar_DotNet\src\FlemanApi\Service\BookingService.cs:294:                var addon = line.AddonId is null ? 
+null : await _addons.GetByIdAsync(line.AddonId.Value);
+  WanderCar_DotNet\src\FlemanApi\Service\BookingService.cs:311:            var currentLines = await 
+_bookingDetails.FindAsync(d => d.BookingId == header.BookingId);
+  WanderCar_DotNet\src\FlemanApi\Service\BookingService.cs:312:            addonAmount = currentLines.Sum(d => 
+d.Subtotal ?? 0);
+  WanderCar_DotNet\src\FlemanApi\Service\BookingService.cs:313:        }
+  WanderCar_DotNet\src\FlemanApi\Service\BookingService.cs:314:
+  WanderCar_DotNet\src\FlemanApi\Service\BookingService.cs:315:        var currentCarType = await 
+_carTypes.GetByIdAsync(header.CarTypeId);
+> WanderCar_DotNet\src\FlemanApi\Service\BookingService.cs:316:        var rentalAmount = currentCarType is not null 
+? RentalRateCalculator.CalculateRentalAmount(currentCarType, days) : 0.0;
+  WanderCar_DotNet\src\FlemanApi\Service\BookingService.cs:317:        header.EstimatedAmount = rentalAmount + 
+addonAmount;
+  WanderCar_DotNet\src\FlemanApi\Service\BookingService.cs:318:
+  WanderCar_DotNet\src\FlemanApi\Service\BookingService.cs:319:        await _bookings.SaveChangesAsync();
+  WanderCar_DotNet\src\FlemanApi\Service\BookingService.cs:320:        return await ToResponseDtoAsync(header);
+  WanderCar_DotNet\src\FlemanApi\Service\BookingService.cs:321:    }
+  WanderCar_DotNet\src\FlemanApi\Service\BookingService.cs:322:
+  WanderCar_DotNet\src\FlemanApi\Service\BookingService.cs:323:    public async Task<BookingResponseDTO> 
+CancelBookingAsync(string confirmationNo)
+  WanderCar_DotNet\src\FlemanApi\Service\BookingService.cs:324:    {
+  WanderCar_DotNet\src\FlemanApi\Service\BookingService.cs:325:        var header = await 
+FindHeaderAsync(confirmationNo);
+  WanderCar_DotNet\src\FlemanApi\Service\BookingService.cs:326:        ValidateBookingAccess(header);
+  WanderCar_DotNet\src\FlemanApi\Service\BookingService.cs:386:            candidate = new string(chars);
+  WanderCar_DotNet\src\FlemanApi\Service\BookingService.cs:387:        } while (await _bookings.ExistsAsync(b => 
+b.ConfirmationNo.ToLower() == candidate.ToLower()));
+  WanderCar_DotNet\src\FlemanApi\Service\BookingService.cs:388:        return candidate;
+  WanderCar_DotNet\src\FlemanApi\Service\BookingService.cs:389:    }
+  WanderCar_DotNet\src\FlemanApi\Service\BookingService.cs:390:
+> WanderCar_DotNet\src\FlemanApi\Service\BookingService.cs:391:    private static int DaysBetween(DateTime pickup, 
+DateTime returnDt)
+  WanderCar_DotNet\src\FlemanApi\Service\BookingService.cs:392:    {
+  WanderCar_DotNet\src\FlemanApi\Service\BookingService.cs:393:        var hours = (returnDt - pickup).TotalHours;
+  WanderCar_DotNet\src\FlemanApi\Service\BookingService.cs:394:        var fullDays = (long)Math.Ceiling(hours / 
+24.0);
+  WanderCar_DotNet\src\FlemanApi\Service\BookingService.cs:395:        return (int)Math.Max(1, fullDays);
+  WanderCar_DotNet\src\FlemanApi\Service\BookingService.cs:396:    }
+  WanderCar_DotNet\src\FlemanApi\Service\BookingService.cs:397:
+  WanderCar_DotNet\src\FlemanApi\Service\BookingService.cs:398:    private void ValidateBookingAccess(BookingHeader 
+booking)
+  WanderCar_DotNet\src\FlemanApi\Service\BookingService.cs:399:    {
+  WanderCar_DotNet\src\FlemanApi\Service\BookingService.cs:400:        var role = _currentUser.GetCurrentRole();
+  WanderCar_DotNet\src\FlemanApi\Service\BookingService.cs:401:        if (role == "STAFF") return;
+
+PS D:\2025-2026\s7\DESIGN PATTERNS\project\FleetManagment> Select-String -Path .\WanderCar_DotNet\src\FlemanApi\Service\StaffService.cs -Pattern "RentalRateCalculator|DaysBetween|ProcessReturnAsync" -Context 5,10
+
+  WanderCar_DotNet\src\FlemanApi\Service\StaffService.cs:102:        await _bookings.SaveChangesAsync();
+  WanderCar_DotNet\src\FlemanApi\Service\StaffService.cs:103:
+  WanderCar_DotNet\src\FlemanApi\Service\StaffService.cs:104:        return await 
+_bookingService.GetBookingByConfirmationAsync(confirmationNo);
+  WanderCar_DotNet\src\FlemanApi\Service\StaffService.cs:105:    }
+  WanderCar_DotNet\src\FlemanApi\Service\StaffService.cs:106:
+> WanderCar_DotNet\src\FlemanApi\Service\StaffService.cs:107:    public async Task<InvoiceResponseDTO> 
+ProcessReturnAsync(string confirmationNo, ProcessReturnRequest request)
+  WanderCar_DotNet\src\FlemanApi\Service\StaffService.cs:108:    {
+  WanderCar_DotNet\src\FlemanApi\Service\StaffService.cs:109:        var header = await 
+FindHeaderAsync(confirmationNo);
+  WanderCar_DotNet\src\FlemanApi\Service\StaffService.cs:110:        if (header.CarId is null)
+  WanderCar_DotNet\src\FlemanApi\Service\StaffService.cs:111:            throw new ApiException("This booking hasn't 
+been handed over yet — nothing to return", HttpStatusCode.Conflict);
+  WanderCar_DotNet\src\FlemanApi\Service\StaffService.cs:112:
+  WanderCar_DotNet\src\FlemanApi\Service\StaffService.cs:113:        var car = await 
+_cars.GetByIdAsync(header.CarId.Value)
+  WanderCar_DotNet\src\FlemanApi\Service\StaffService.cs:114:            ?? throw new 
+ResourceNotFoundException($"Car not found: {header.CarId}");
+  WanderCar_DotNet\src\FlemanApi\Service\StaffService.cs:115:        var carType = await 
+_carTypes.GetByIdAsync(car.CarTypeId)
+  WanderCar_DotNet\src\FlemanApi\Service\StaffService.cs:116:            ?? throw new 
+ResourceNotFoundException($"Car type not found: {car.CarTypeId}");
+  WanderCar_DotNet\src\FlemanApi\Service\StaffService.cs:117:        var customer = await 
+_customers.GetByIdAsync(header.CustomerId)
+  WanderCar_DotNet\src\FlemanApi\Service\StaffService.cs:122:        // now — not the originally booked 
+pickup/return window.
+  WanderCar_DotNet\src\FlemanApi\Service\StaffService.cs:123:        var actualHandover = 
+header.ActualHandoverDatetime ?? header.PickupDatetime;
+  WanderCar_DotNet\src\FlemanApi\Service\StaffService.cs:124:        var actualReturn = DateTime.Now;
+  WanderCar_DotNet\src\FlemanApi\Service\StaffService.cs:125:        header.ActualReturnDatetime = actualReturn;
+  WanderCar_DotNet\src\FlemanApi\Service\StaffService.cs:126:
+> WanderCar_DotNet\src\FlemanApi\Service\StaffService.cs:127:        var days = DaysBetween(actualHandover, 
+actualReturn);
+> WanderCar_DotNet\src\FlemanApi\Service\StaffService.cs:128:        var rentalAmount = 
+RentalRateCalculator.CalculateRentalAmount(carType, days);
+  WanderCar_DotNet\src\FlemanApi\Service\StaffService.cs:129:        // Re-priced against the actual days billed, 
+not the subtotal frozen
+  WanderCar_DotNet\src\FlemanApi\Service\StaffService.cs:130:        // on the line at booking time — an early 
+return shortens rentalAmount
+  WanderCar_DotNet\src\FlemanApi\Service\StaffService.cs:131:        // above the same way, so add-ons need to 
+shrink with it too instead
+  WanderCar_DotNet\src\FlemanApi\Service\StaffService.cs:132:        // of still billing for the originally planned 
+(longer) stay.
+  WanderCar_DotNet\src\FlemanApi\Service\StaffService.cs:133:        var addonAmount = lines.Sum(l => (l.AddonRate 
+?? 0) * (l.Quantity ?? 0) * days);
+  WanderCar_DotNet\src\FlemanApi\Service\StaffService.cs:134:        var extraCharge = request.ExtraChargeAmount ?? 
+0.0;
+  WanderCar_DotNet\src\FlemanApi\Service\StaffService.cs:135:
+  WanderCar_DotNet\src\FlemanApi\Service\StaffService.cs:136:        // Fuel shortfall: tank tracked in quarters 
+(25/50/75/100). Only
+  WanderCar_DotNet\src\FlemanApi\Service\StaffService.cs:137:        // charged when it comes back lower than handed 
+over with.
+  WanderCar_DotNet\src\FlemanApi\Service\StaffService.cs:138:        var handoverFuelLevel = 
+header.HandoverFuelLevel;
+  WanderCar_DotNet\src\FlemanApi\Service\StaffService.cs:268:        var lower = confirmationNo.ToLower();
+  WanderCar_DotNet\src\FlemanApi\Service\StaffService.cs:269:        return await _bookings.FirstOrDefaultAsync(b => 
+b.ConfirmationNo.ToLower() == lower)
+  WanderCar_DotNet\src\FlemanApi\Service\StaffService.cs:270:            ?? throw new ResourceNotFoundException("No 
+booking found for that confirmation number");
+  WanderCar_DotNet\src\FlemanApi\Service\StaffService.cs:271:    }
+  WanderCar_DotNet\src\FlemanApi\Service\StaffService.cs:272:
+> WanderCar_DotNet\src\FlemanApi\Service\StaffService.cs:273:    private static int DaysBetween(DateTime pickup, 
+DateTime returnDt)
+  WanderCar_DotNet\src\FlemanApi\Service\StaffService.cs:274:    {
+  WanderCar_DotNet\src\FlemanApi\Service\StaffService.cs:275:        var hours = (returnDt - pickup).TotalHours;
+  WanderCar_DotNet\src\FlemanApi\Service\StaffService.cs:276:        var fullDays = (long)Math.Ceiling(hours / 24.0);
+  WanderCar_DotNet\src\FlemanApi\Service\StaffService.cs:277:        return (int)Math.Max(1, fullDays);
+  WanderCar_DotNet\src\FlemanApi\Service\StaffService.cs:278:    }
+  WanderCar_DotNet\src\FlemanApi\Service\StaffService.cs:279:
+  WanderCar_DotNet\src\FlemanApi\Service\StaffService.cs:280:    private static InvoiceResponseDTO 
+ToDto(InvoiceHeader inv) => new()
+  WanderCar_DotNet\src\FlemanApi\Service\StaffService.cs:281:    {
+  WanderCar_DotNet\src\FlemanApi\Service\StaffService.cs:282:        InvoiceId = inv.InvoiceId,
+  WanderCar_DotNet\src\FlemanApi\Service\StaffService.cs:283:        InvoiceDate = inv.InvoiceDate,
