@@ -55,3 +55,36 @@ Also write Part3/Observer_Pattern/common_spec.md with the participants, rules, f
 Then actually compile and run all four and save each real output as test_result.txt in its folder. Write Part3/Observer_Pattern/measure.py (standard library only) that does the compiling, running and timing, and save its output as measure_output.txt. Measure for each language: source LOC of the snippet (non-blank, non-comment, excluding the test runner), maximum cyclomatic complexity of any function (count 1 + each if, loop, case, catch, && and ||, and state this rule), compiler/runtime name and version, and median elapsed time in ms of the test runner process (compile first, one warm-up, five measured runs; save the raw timings in timings.txt and say that the time includes process start-up). For C++, if no g++ or MSVC is installed, use clang through zig (pip install ziglang), as the Dependency Injection port did, and report any compiler warnings that come from the project files separately from those in the compiler's own headers.
 
 Finally give me four CSV rows for Part3/llm/pattern_crosslanguage.csv with these columns: pattern_name, instance_name, language, snippet_path, source_loc, max_function_cc, runtime_compiler, test_command, test_result, median_process_ms, language_notes. In language_notes say how the subject, the observers and the event are expressed in that language, how identity is checked, and how a failing observer is isolated. Do not delete __pycache__, .class or binary files silently; list them and add a .gitignore in Part3/Observer_Pattern/ so they are excluded from the upload.
+
+
+
+----------------------------
+I need Part 3 (cross-language comparison) of a design-patterns case study for one pattern. Never report a test result, timing or measurement you did not actually get; if a compiler, runtime or tool is missing, stop and tell me instead of guessing or simulating output.
+
+Pattern: Dependency Injection. Source instance: "Service Registration and Constructor Injection" from the WanderCar/Fleman ASP.NET Core 8 backend: the registrations in FlemanApi/Program.cs (lines 179-214, e.g. AddScoped(typeof(IGenericRepository<,>), typeof(GenericRepository<,>)), AddSingleton(TimeProvider.System), AddScoped<IMaintenanceService, MaintenanceService>()) and services that receive their dependencies through the constructor (e.g. StaffService, MaintenanceService).
+
+Create Part3/Dependency_Injection_Pattern/ with subfolders Java, Python, JavaScript and Cpp, using the same layout as Part3/Observer_Pattern/. Every folder must be self-contained: no imports from other folders, no build tool, no test framework, no third-party libraries. In each folder write:
+1. A snippet file with only the pattern: a Lifetime enumeration (SINGLETON, SCOPED, TRANSIENT); a ServiceCollection with addSingleton, addScoped, addTransient (implementation plus the names of its dependencies), addSingletonInstance (an existing object) and addOpenGeneric (e.g. "IGenericRepository" so that "IGenericRepository<Car>" resolves through a factory given "Car"); and a ServiceProvider with createScope() and getRequiredService(token). Services are identified by string tokens. Use each language's idiomatic way to build an object from its dependencies (reflection in Java, calling the class in Python, `new` in JavaScript, variadic templates in C++), and say which one you used.
+2. A separate test runner file that runs exactly these 10 cases, prints one PASS/FAIL line per case and a final "PASS n/10", and exits non-zero on any failure. Use a small in-file stand-in for DbContext, GenericRepository, TimeProvider and MaintenanceService:
+   - D01 resolving "IMaintenanceService" from a scope builds MaintenanceService with IGenericRepository<MaintenanceSchedule>, IGenericRepository<Car> and the TimeProvider instance
+   - D02 a scoped service is the same object within one scope and a different object in another scope
+   - D03 two repositories resolved in one scope share that scope's DbContext (a row added through one is saved through the other)
+   - D04 an instance registered with addSingletonInstance is returned unchanged from the root and from every scope
+   - D04b a class registered with addSingleton is built once and is the same object from the root and from every scope
+   - D05 a transient service is a new object on every resolve
+   - D06 "IGenericRepository<Car>" is the same object twice in one scope and differs from "IGenericRepository<Hub>"
+   - D07 an unregistered token fails with exactly: No service for type 'IBookingService' has been registered.
+   - D08 resolving a scoped service from the root fails with exactly: Cannot resolve scoped service 'IMaintenanceService' from root provider.
+   - D09 when a token is registered twice, the last registration wins
+3. A README.md with the tool version, the exact compile and run commands, and the working folder.
+
+Also write Part3/Dependency_Injection_Pattern/common_spec.md with the inputs, expected outputs, rules and error cases above.
+
+Then actually compile and run all four and save each real output as test_result.txt in its folder. As a check that the tests can fail, inject two deliberate bugs into a temporary copy of each snippet (singletons cached per scope instead of on the root; the scoped-from-root check removed), confirm at least one case fails for each, and report the result; do not change the real files. Measure for each language, with the same rules as the Factory Method and Observer rows in Part3/llm/pattern_crosslanguage.csv:
+   - source LOC of the snippet (non-blank, non-comment, excluding the test runner);
+   - maximum cyclomatic complexity of any function (count 1 + each if, loop, case, catch, && and ||, and state this rule);
+   - compiler/runtime name and version;
+   - median elapsed time in ms of the test runner process (compile first, one warm-up, five measured runs; save the raw timings in timings.txt and say that the time includes process start-up).
+
+Finally give me four CSV rows to append to Part3/llm/pattern_crosslanguage.csv with these columns: pattern_name, instance_name, language, snippet_path, source_loc, max_function_cc, runtime_compiler, test_command, test_result, median_process_ms, language_notes. In language_notes say how each language builds an object from its dependencies, how it keeps the generic type argument (or why it cannot, e.g. Java type erasure), and any language pitfall you hit. Do not delete __pycache__, .class or binary files silently; list them so I can exclude them from the upload.
+
