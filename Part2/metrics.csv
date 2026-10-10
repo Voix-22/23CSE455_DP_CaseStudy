@@ -1,0 +1,5 @@
+metric,before,after,note
+source_loc,3599,3957,"team LOC rule in WanderCar_DotNet/src/FlemanApi; before = baseline dfc61ab8, after = ch03 branch pre-rebase (recount on evolution after ch02)"
+tests_total,183,233,"dotnet test, run 2026-10-10; logs test_result_baseline.txt and test_result.txt"
+tests_passed,182,232,"baseline already fails StaffServiceTests.ProcessReturnAsync_CreatesInvoiceHeaderAndDetails (clock-dependent, see refactoring.md)"
+tests_failed,1,1,"same pre-existing failure; all 50 new tests pass"
