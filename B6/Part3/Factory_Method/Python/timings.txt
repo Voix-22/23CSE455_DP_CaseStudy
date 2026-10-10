@@ -1,0 +1,19 @@
+language: python
+tool: Python 3.14.3
+command: python test_runner.py
+working folder: Part3/FactoryMethod_VehicleCategoryRules/python
+method: wall-clock time of the whole test runner process, measured with
+        time.perf_counter() around subprocess.run() in measure.py.
+        Includes process start-up (JVM / interpreter / runtime load) and
+        the cost of creating the child process and capturing its output.
+        Compiled first, 1 warm-up run discarded, 5 measured runs.
+
+run 1: 54.256 ms (exit code 0)
+run 2: 56.427 ms (exit code 0)
+run 3: 56.644 ms (exit code 0)
+run 4: 64.042 ms (exit code 0)
+run 5: 77.345 ms (exit code 0)
+
+median: 56.644 ms
+min: 54.256 ms
+max: 77.345 ms
