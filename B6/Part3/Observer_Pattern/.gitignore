@@ -1,0 +1,5 @@
+# Build outputs of the four test runners (not part of the submission)
+*.class
+*.exe
+*.pdb
+__pycache__/

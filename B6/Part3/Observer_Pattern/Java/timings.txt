@@ -1,0 +1,20 @@
+language: Java
+tool: javac 26.0.1
+compile: javac BookingEventPublisher.java TestRunner.java
+command: java -cp . TestRunner
+working folder: Part3/Observer_Pattern/Java
+method: wall-clock time of the whole test runner process, measured with
+        time.perf_counter() around subprocess.run() in measure.py.
+        Includes process start-up (JVM / interpreter / runtime load) and
+        the cost of creating the child process and capturing its output.
+        Compiled first, 1 warm-up run discarded, 5 measured runs.
+
+run 1: 206.412 ms (exit code 0)
+run 2: 203.816 ms (exit code 0)
+run 3: 263.158 ms (exit code 0)
+run 4: 238.745 ms (exit code 0)
+run 5: 260.434 ms (exit code 0)
+
+median: 238.745 ms
+min: 203.816 ms
+max: 263.158 ms

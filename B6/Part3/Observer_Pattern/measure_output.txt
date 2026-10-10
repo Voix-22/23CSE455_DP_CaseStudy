@@ -1,0 +1,60 @@
+== Java
+tool: javac 26.0.1
+compiler output: (none)
+source_loc(BookingEventPublisher.java): 71
+exit code: 0
+PASS 1 CREATED sends the confirmation e-mail and writes one audit line
+PASS 2 MODIFIED sends the update e-mail and writes one audit line
+PASS 3 CANCELLED sends the cancellation e-mail and writes one audit line
+PASS 4 observers are notified in subscription order
+PASS 5 subscribing the same observer twice notifies it once
+PASS 6 an unsubscribed observer is no longer notified
+PASS 7 a throwing observer is logged and the others still run
+PASS 8 no customer e-mail: nothing sent, audit still written
+PASS 8/8
+median_process_ms: 238.745   raw: [206.412, 203.816, 263.158, 238.745, 260.434]
+== Python
+tool: Python 3.14.6
+compiler output: (none)
+source_loc(booking_observer.py): 69
+exit code: 0
+PASS 1 CREATED sends the confirmation e-mail and writes one audit line
+PASS 2 MODIFIED sends the update e-mail and writes one audit line
+PASS 3 CANCELLED sends the cancellation e-mail and writes one audit line
+PASS 4 observers are notified in subscription order
+PASS 5 subscribing the same observer twice notifies it once
+PASS 6 an unsubscribed observer is no longer notified
+PASS 7 a throwing observer is logged and the others still run
+PASS 8 no customer e-mail: nothing sent, audit still written
+PASS 8/8
+median_process_ms: 65.462   raw: [65.462, 69.863, 52.768, 55.381, 65.554]
+== JavaScript
+tool: v24.18.0
+compiler output: (none)
+source_loc(bookingObserver.js): 63
+exit code: 0
+PASS 1 CREATED sends the confirmation e-mail and writes one audit line
+PASS 2 MODIFIED sends the update e-mail and writes one audit line
+PASS 3 CANCELLED sends the cancellation e-mail and writes one audit line
+PASS 4 observers are notified in subscription order
+PASS 5 subscribing the same observer twice notifies it once
+PASS 6 an unsubscribed observer is no longer notified
+PASS 7 a throwing observer is logged and the others still run
+PASS 8 no customer e-mail: nothing sent, audit still written
+PASS 8/8
+median_process_ms: 70.985   raw: [66.659, 70.936, 89.625, 103.513, 70.985]
+== Cpp
+tool: clang version 21.1.0
+compiler output: (none)
+source_loc(booking_observer.hpp): 102
+exit code: 0
+PASS 1 CREATED sends the confirmation e-mail and writes one audit line
+PASS 2 MODIFIED sends the update e-mail and writes one audit line
+PASS 3 CANCELLED sends the cancellation e-mail and writes one audit line
+PASS 4 observers are notified in subscription order
+PASS 5 subscribing the same observer twice notifies it once
+PASS 6 an unsubscribed observer is no longer notified
+PASS 7 a throwing observer is logged and the others still run
+PASS 8 no customer e-mail: nothing sent, audit still written
+PASS 8/8
+median_process_ms: 16.870   raw: [19.822, 17.916, 16.87, 9.955, 9.594]

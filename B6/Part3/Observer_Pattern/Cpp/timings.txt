@@ -1,0 +1,20 @@
+language: Cpp
+tool: clang version 21.1.0
+compile: C:/Users/VANI/AppData/Local/Temp/claude/d--clg-sem-7-design-patterns-23CSE455-DP-CaseStudy/ae40426e-93fa-44c2-9dcf-8274dd8c97cf/scratchpad/zigenv/Scripts/python.exe -m ziglang c++ -std=c++17 -O2 -Wall -Wextra -o test_runner.exe test_runner.cpp
+command: test_runner.exe
+working folder: Part3/Observer_Pattern/Cpp
+method: wall-clock time of the whole test runner process, measured with
+        time.perf_counter() around subprocess.run() in measure.py.
+        Includes process start-up (JVM / interpreter / runtime load) and
+        the cost of creating the child process and capturing its output.
+        Compiled first, 1 warm-up run discarded, 5 measured runs.
+
+run 1: 19.822 ms (exit code 0)
+run 2: 17.916 ms (exit code 0)
+run 3: 16.870 ms (exit code 0)
+run 4: 9.955 ms (exit code 0)
+run 5: 9.594 ms (exit code 0)
+
+median: 16.870 ms
+min: 9.594 ms
+max: 19.822 ms

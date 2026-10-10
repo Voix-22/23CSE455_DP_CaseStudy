@@ -1,0 +1,20 @@
+language: Python
+tool: Python 3.14.6
+compile: (none)
+command: python test_runner.py
+working folder: Part3/Observer_Pattern/Python
+method: wall-clock time of the whole test runner process, measured with
+        time.perf_counter() around subprocess.run() in measure.py.
+        Includes process start-up (JVM / interpreter / runtime load) and
+        the cost of creating the child process and capturing its output.
+        Compiled first, 1 warm-up run discarded, 5 measured runs.
+
+run 1: 65.462 ms (exit code 0)
+run 2: 69.863 ms (exit code 0)
+run 3: 52.768 ms (exit code 0)
+run 4: 55.381 ms (exit code 0)
+run 5: 65.554 ms (exit code 0)
+
+median: 65.462 ms
+min: 52.768 ms
+max: 69.863 ms

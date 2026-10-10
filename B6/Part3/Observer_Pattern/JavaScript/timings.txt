@@ -1,0 +1,20 @@
+language: JavaScript
+tool: v24.18.0
+compile: (none)
+command: node testRunner.js
+working folder: Part3/Observer_Pattern/JavaScript
+method: wall-clock time of the whole test runner process, measured with
+        time.perf_counter() around subprocess.run() in measure.py.
+        Includes process start-up (JVM / interpreter / runtime load) and
+        the cost of creating the child process and capturing its output.
+        Compiled first, 1 warm-up run discarded, 5 measured runs.
+
+run 1: 66.659 ms (exit code 0)
+run 2: 70.936 ms (exit code 0)
+run 3: 89.625 ms (exit code 0)
+run 4: 103.513 ms (exit code 0)
+run 5: 70.985 ms (exit code 0)
+
+median: 70.985 ms
+min: 66.659 ms
+max: 103.513 ms

@@ -1,0 +1,9 @@
+PASS 1 CREATED sends the confirmation e-mail and writes one audit line
+PASS 2 MODIFIED sends the update e-mail and writes one audit line
+PASS 3 CANCELLED sends the cancellation e-mail and writes one audit line
+PASS 4 observers are notified in subscription order
+PASS 5 subscribing the same observer twice notifies it once
+PASS 6 an unsubscribed observer is no longer notified
+PASS 7 a throwing observer is logged and the others still run
+PASS 8 no customer e-mail: nothing sent, audit still written
+PASS 8/8
