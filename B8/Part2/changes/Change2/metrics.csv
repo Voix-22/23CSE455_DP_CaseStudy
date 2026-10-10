@@ -1,0 +1,19 @@
+metric,scope,before,after,tool,status
+source_loc,FlemanApi/*.cs excluding Migrations obj bin; non-blank lines not starting with //,3599,3794,find + grep + wc,measured
+source_files,FlemanApi/*.cs excluding Migrations obj bin,107,118,find + wc,measured
+test_loc,FlemanApi.Tests/*.cs excluding obj bin; same line rule,2136,2383,find + grep + wc,measured
+test_fixture_files,FlemanApi.Tests/**/*Tests.cs,18,21,find + wc,measured
+tests_total,dotnet test src/FlemanApi.Tests/FlemanApi.Tests.csproj (SDK 8.0.425),183,207,dotnet test,measured (baseline_test.log; test_result.txt)
+tests_passed,dotnet test src/FlemanApi.Tests/FlemanApi.Tests.csproj (SDK 8.0.425),182,206,dotnet test,measured
+tests_failed,dotnet test src/FlemanApi.Tests/FlemanApi.Tests.csproj (SDK 8.0.425),1,1,dotnet test,measured (same test both runs: StaffServiceTests.ProcessReturnAsync_CreatesInvoiceHeaderAndDetails; clock-dependent; present at baseline)
+tests_skipped,dotnet test src/FlemanApi.Tests/FlemanApi.Tests.csproj (SDK 8.0.425),0,0,dotnet test,measured
+new_tests_passed,the 24 tests added by CH02,n/a,24 of 24,dotnet test,measured (207 total minus 183 existing; the only failure is an existing test)
+build_warnings,dotnet build of both projects,0,0,dotnet test output,measured
+build_errors,dotnet build of both projects,0,0,dotnet test output,measured
+files_changed,git diff baseline ch02,0,21,git diff --numstat,measured (16 added; 5 modified)
+lines_added,git diff baseline ch02,0,1226,git diff --numstat,measured (645 in Migrations of which 593 are the generated-style designer; 309 in tests)
+lines_removed,git diff baseline ch02,0,0,git diff --numstat,measured
+pending_model_changes,EF Core model vs migrations at ch02,n/a,none,dotnet ef migrations has-pending-model-changes (dotnet-ef 8.0.2; MySQL 8.0.46),measured (http_evidence.txt B0)
+code_coverage,FlemanApi,,,coverlet.collector,not_measured: no coverage run was made at either commit
+cyclomatic_complexity,FlemanApi,,,none,not_measured: no complexity tool was run at either commit
+coupling_cohesion,FlemanApi,,,none,not_measured: no CK-metrics tool was run at either commit

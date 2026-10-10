@@ -1,0 +1,38 @@
+# ref: ch02-vehicle-categories -> 7af8d229edfaa1d5c933a0a56aa267a443bece9f
+# sdk: 8.0.425
+# cwd: WanderCar_DotNet
+# cmd: dotnet test src/FlemanApi.Tests/FlemanApi.Tests.csproj
+
+  Determining projects to restore...
+  Restored /work/WanderCar_DotNet/src/FlemanApi.Tests/FlemanApi.Tests.csproj (in 2.11 sec).
+  Restored /work/WanderCar_DotNet/src/FlemanApi/FlemanApi.csproj (in 2.11 sec).
+  FlemanApi -> /work/WanderCar_DotNet/src/FlemanApi/bin/Debug/net8.0/FlemanApi.dll
+  FlemanApi.Tests -> /work/WanderCar_DotNet/src/FlemanApi.Tests/bin/Debug/net8.0/FlemanApi.Tests.dll
+Test run for /work/WanderCar_DotNet/src/FlemanApi.Tests/bin/Debug/net8.0/FlemanApi.Tests.dll (.NETCoreApp,Version=v8.0)
+VSTest version 17.11.1 (x64)
+
+Starting test execution, please wait...
+A total of 1 test files matched the specified pattern.
+  Failed ProcessReturnAsync_CreatesInvoiceHeaderAndDetails [75 ms]
+  Error Message:
+   Expected result.AddonAmount to be 40.0, but found 710.0 (difference of 670).
+  Stack Trace:
+     at FluentAssertions.Execution.LateBoundTestFramework.Throw(String message)
+   at FluentAssertions.Execution.TestFrameworkProvider.Throw(String message)
+   at FluentAssertions.Execution.DefaultAssertionStrategy.HandleFailure(String message)
+   at FluentAssertions.Execution.AssertionScope.FailWith(Func`1 failReasonFunc)
+   at FluentAssertions.Execution.AssertionScope.FailWith(Func`1 failReasonFunc)
+   at FluentAssertions.Execution.AssertionScope.FailWith(String message, Object[] args)
+   at FluentAssertions.Numeric.NumericAssertions`2.Be(T expected, String because, Object[] becauseArgs)
+   at FlemanApi.Tests.Services.StaffServiceTests.ProcessReturnAsync_CreatesInvoiceHeaderAndDetails() in /work/WanderCar_DotNet/src/FlemanApi.Tests/Services/StaffServiceTests.cs:line 326
+   at NUnit.Framework.Internal.TaskAwaitAdapter.GenericAdapter`1.GetResult()
+   at NUnit.Framework.Internal.AsyncToSyncAdapter.Await(Func`1 invoke)
+   at NUnit.Framework.Internal.Commands.TestMethodCommand.RunTestMethod(TestExecutionContext context)
+   at NUnit.Framework.Internal.Commands.TestMethodCommand.Execute(TestExecutionContext context)
+   at NUnit.Framework.Internal.Commands.BeforeAndAfterTestCommand.<>c__DisplayClass1_0.<Execute>b__0()
+   at NUnit.Framework.Internal.Commands.DelegatingTestCommand.RunTestMethodInThreadAbortSafeZone(TestExecutionContext context, Action action)
+
+
+
+Failed!  - Failed:     1, Passed:   206, Skipped:     0, Total:   207, Duration: 4 s - FlemanApi.Tests.dll (net8.0)
+# exit code: 1
