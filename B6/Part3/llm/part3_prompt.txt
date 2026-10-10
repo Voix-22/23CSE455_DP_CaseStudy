@@ -19,3 +19,39 @@ Also write Part3/FactoryMethod_VehicleCategoryRules/common_spec.md with the inpu
 Then actually compile and run all four and save each real output as test_result.txt in its folder. Measure for each language: source LOC of the snippet (non-blank, non-comment, excluding the test runner), maximum cyclomatic complexity of any function (count 1 + each if, loop, case, catch, && and ||, and state this rule), compiler/runtime name and version, and median elapsed time in ms of the test runner process (compile first, one warm-up, five measured runs; save the raw timings in timings.txt and say that the time includes process start-up).
 
 Finally give me four CSV rows with these columns: pattern_name, instance_name, language, snippet_path, source_loc, max_function_cc, runtime_compiler, test_command, test_result, median_process_ms, language_notes. In language_notes say how the abstraction and the factory are expressed in that language. Do not delete __pycache__, .class or binary files silently; list them so I can exclude them from the upload.
+
+
+I need Part 3 (cross-language comparison) of a design-patterns case study for one pattern. Never report a test result or timing you did not actually get; if a tool is missing, stop and tell me.
+
+Pattern: Observer (push model). Source instance: "Booking Lifecycle Notification" from my C# change CH04 (FlemanApi/Service/Notifications/, commit 9be38a6f; code in Part2/changes/Change4/diff.patch). Participants: IBookingEventPublisher (Subject) with Subscribe, Unsubscribe and PublishAsync; BookingEventPublisher (ConcreteSubject); IBookingEventObserver (Observer) with OnBookingEventAsync(BookingEvent); EmailBookingObserver and AuditLogBookingObserver (ConcreteObservers); BookingEvent record and BookingEventKind enum (CREATED, MODIFIED, CANCELLED).
+
+Create Part3/Observer_Pattern/ with subfolders Java, Python, JavaScript, Cpp (use exactly these folder names). In each, write:
+1. A snippet file containing only the pattern:
+   - a BookingEventKind enumeration (CREATED, MODIFIED, CANCELLED);
+   - an immutable BookingEvent with kind, confirmationNo, customerName, customerEmail (optional), carTypeName, estimatedAmount;
+   - a BookingEventObserver abstraction with onBookingEvent(event);
+   - a BookingEventSubject abstraction with subscribe(observer), unsubscribe(observer), publish(event);
+   - a BookingEventPublisher (ConcreteSubject) whose constructor takes the initial observers, plus warnings();
+   - an EmailBookingObserver that appends (to, subject, body) to an outbox list, and an AuditLogBookingObserver that appends one line to an audit log list.
+   Keep it synchronous and use in-memory lists instead of real e-mail and logging, so the four ports are comparable. Use each language's idiomatic way to express an interface. No frameworks, no third-party libraries.
+2. Rules the snippet must follow:
+   - The constructor subscribes the given observers in order. subscribe ignores an observer that is already subscribed (identity, not equality). unsubscribe removes it.
+   - publish notifies every observer once, in subscription order, iterating over a copy of the list. If an observer throws, catch it, append exactly one warning "observer failed for <KIND> <confirmationNo>: <error message>", and continue. publish never throws.
+   - E-mail subjects: CREATED "Booking Confirmation - Fleeman", MODIFIED "Booking Updated - Fleeman", CANCELLED "Booking Cancelled - Fleeman". Body: "Dear <customerName>, your booking <confirmationNo> (<carTypeName>) has been confirmed." with "updated." or "cancelled." for the other two kinds. If customerEmail is absent or empty, send nothing.
+   - Audit line: "AUDIT <KIND> <confirmationNo> amount=<estimatedAmount with 2 decimals>", always with "." as the decimal point.
+3. A separate test runner file, no test framework, that runs exactly these 8 cases, prints one PASS/FAIL line per case and a final "PASS n/8", and exits non-zero on any failure. Default event: kind, "ABC12345", "Jane Doe", "jane@example.com", "Sedan", 500.0. A recording observer named X appends "X:<KIND>" to a shared list; a throwing observer throws "SMTP down".
+   - [email, audit], publish CREATED: outbox is exactly one e-mail to jane@example.com, "Booking Confirmation - Fleeman", "Dear Jane Doe, your booking ABC12345 (Sedan) has been confirmed."; audit log is exactly "AUDIT CREATED ABC12345 amount=500.00"
+   - [email, audit], publish MODIFIED: one e-mail "Booking Updated - Fleeman" whose body ends "has been updated."; audit "AUDIT MODIFIED ABC12345 amount=500.00"
+   - [email, audit], publish CANCELLED: one e-mail "Booking Cancelled - Fleeman" whose body ends "has been cancelled."; audit "AUDIT CANCELLED ABC12345 amount=500.00"
+   - recorders [A, B, C], publish CREATED: calls are A, B, C in that order
+   - [A], subscribe(A) again, publish CREATED: A is called exactly once
+   - [A, B, C], unsubscribe(B), publish CANCELLED: calls are A, C
+   - [A, throwing, C], publish CREATED: publish does not throw; calls are A, C; warnings are exactly "observer failed for CREATED ABC12345: SMTP down"
+   - [email, audit], publish CREATED with no customer e-mail: outbox is empty; audit log has exactly one line
+4. A README.md with the tool version, the exact compile and run commands, the working folder (Part3/Observer_Pattern/<Language>), a table mapping each Observer role to the class in that language and to the C# original, and language-specific notes.
+
+Also write Part3/Observer_Pattern/common_spec.md with the participants, rules, fixture, test cases and runner contract above, and state how the ports are simplified compared with the C# original.
+
+Then actually compile and run all four and save each real output as test_result.txt in its folder. Write Part3/Observer_Pattern/measure.py (standard library only) that does the compiling, running and timing, and save its output as measure_output.txt. Measure for each language: source LOC of the snippet (non-blank, non-comment, excluding the test runner), maximum cyclomatic complexity of any function (count 1 + each if, loop, case, catch, && and ||, and state this rule), compiler/runtime name and version, and median elapsed time in ms of the test runner process (compile first, one warm-up, five measured runs; save the raw timings in timings.txt and say that the time includes process start-up). For C++, if no g++ or MSVC is installed, use clang through zig (pip install ziglang), as the Dependency Injection port did, and report any compiler warnings that come from the project files separately from those in the compiler's own headers.
+
+Finally give me four CSV rows for Part3/llm/pattern_crosslanguage.csv with these columns: pattern_name, instance_name, language, snippet_path, source_loc, max_function_cc, runtime_compiler, test_command, test_result, median_process_ms, language_notes. In language_notes say how the subject, the observers and the event are expressed in that language, how identity is checked, and how a failing observer is isolated. Do not delete __pycache__, .class or binary files silently; list them and add a .gitignore in Part3/Observer_Pattern/ so they are excluded from the upload.
