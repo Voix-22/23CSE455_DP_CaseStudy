@@ -1,0 +1,17 @@
+metric,scope,before,after,tool,status
+source_loc,FlemanApi/*.cs excluding Migrations obj bin; non-blank lines not starting with //,3599,3739,find + grep + wc,measured (before = baseline dfc61ab8; after = ch04 9be38a6f; +140)
+test_loc,FlemanApi.Tests/*.cs excluding obj bin; same line rule,2136,2508,find + grep + wc,measured (+372)
+tests_total,dotnet test src/FlemanApi.Tests/FlemanApi.Tests.csproj (SDK 8.0.425),183,201,dotnet test,measured 2026-10-10 (test_result_baseline.txt; test_result.txt)
+tests_passed,dotnet test src/FlemanApi.Tests/FlemanApi.Tests.csproj (SDK 8.0.425),182,200,dotnet test,measured
+tests_failed,dotnet test src/FlemanApi.Tests/FlemanApi.Tests.csproj (SDK 8.0.425),1,1,dotnet test,measured (same test both runs: StaffServiceTests.ProcessReturnAsync_CreatesInvoiceHeaderAndDetails; clock-dependent; present at baseline; not touched by CH04)
+tests_skipped,dotnet test src/FlemanApi.Tests/FlemanApi.Tests.csproj (SDK 8.0.425),0,0,dotnet test,measured
+new_tests_passed,the 18 tests added by CH04,n/a,18 of 18,dotnet test,measured (6 BookingEventPublisherTests + 7 BookingObserverTests + 5 BookingServiceNotificationTests)
+existing_booking_tests_passed,BookingServiceTests (21 tests),21 of 21,21 of 21,dotnet test,measured (only the SetUp constructor argument changed)
+build_warnings,dotnet build --no-incremental of both projects,0,0,dotnet build,measured
+build_errors,dotnet build --no-incremental of both projects,0,0,dotnet build,measured
+files_changed,git diff baseline ch04,0,13,git diff --name-status,measured (10 added; 3 modified: BookingService.cs Program.cs BookingServiceTests.cs)
+lines_added,git diff baseline ch04,0,709,git diff --shortstat,measured
+lines_removed,git diff baseline ch04,0,34,git diff --shortstat,measured (33 in BookingService.cs: moved e-mail block + IEmailService field/param/assignment; 1 in BookingServiceTests.cs: constructor argument)
+migrations_added,FlemanApi/Migrations,0,0,git diff --name-status,measured (no database change)
+code_coverage,FlemanApi,,,coverlet.collector,not_measured: no coverage run was made at either commit
+cyclomatic_complexity,FlemanApi,,,none,not_measured: no complexity tool was run at either commit

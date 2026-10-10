@@ -1,0 +1,13 @@
+A	WanderCar_DotNet/src/FlemanApi.Tests/Services/BookingEventPublisherTests.cs
+A	WanderCar_DotNet/src/FlemanApi.Tests/Services/BookingObserverTests.cs
+A	WanderCar_DotNet/src/FlemanApi.Tests/Services/BookingServiceNotificationTests.cs
+M	WanderCar_DotNet/src/FlemanApi.Tests/Services/BookingServiceTests.cs
+A	WanderCar_DotNet/src/FlemanApi.Tests/TestHelpers/ListLogger.cs
+M	WanderCar_DotNet/src/FlemanApi/Program.cs
+M	WanderCar_DotNet/src/FlemanApi/Service/BookingService.cs
+A	WanderCar_DotNet/src/FlemanApi/Service/Notifications/AuditLogBookingObserver.cs
+A	WanderCar_DotNet/src/FlemanApi/Service/Notifications/BookingEvent.cs
+A	WanderCar_DotNet/src/FlemanApi/Service/Notifications/BookingEventPublisher.cs
+A	WanderCar_DotNet/src/FlemanApi/Service/Notifications/EmailBookingObserver.cs
+A	WanderCar_DotNet/src/FlemanApi/Service/Notifications/IBookingEventObserver.cs
+A	WanderCar_DotNet/src/FlemanApi/Service/Notifications/IBookingEventPublisher.cs

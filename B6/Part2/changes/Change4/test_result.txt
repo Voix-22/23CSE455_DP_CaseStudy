@@ -1,0 +1,257 @@
+$ git rev-parse HEAD && git status --short
+9be38a6ff4cd5b10b813aedb42c3de8a1e82730d
+
+$ dotnet --version
+8.0.425
+
+$ date
+Sat Oct 10 22:00:26 IST 2026
+
+$ dotnet build src/FlemanApi.Tests/FlemanApi.Tests.csproj --no-incremental
+Build succeeded.
+    0 Warning(s)
+    0 Error(s)
+
+Time Elapsed 00:00:03.14
+
+$ dotnet test src/FlemanApi.Tests/FlemanApi.Tests.csproj --logger "console;verbosity=normal"
+  Determining projects to restore...
+  All projects are up-to-date for restore.
+  FlemanApi -> C:\Users\VANI\AppData\Local\Temp\claude\d--clg-sem-7-design-patterns-23CSE455-DP-CaseStudy\ae40426e-93fa-44c2-9dcf-8274dd8c97cf\scratchpad\fm\WanderCar_DotNet\src\FlemanApi\bin\Debug\net8.0\FlemanApi.dll
+  FlemanApi.Tests -> C:\Users\VANI\AppData\Local\Temp\claude\d--clg-sem-7-design-patterns-23CSE455-DP-CaseStudy\ae40426e-93fa-44c2-9dcf-8274dd8c97cf\scratchpad\fm\WanderCar_DotNet\src\FlemanApi.Tests\bin\Debug\net8.0\FlemanApi.Tests.dll
+Test run for C:\Users\VANI\AppData\Local\Temp\claude\d--clg-sem-7-design-patterns-23CSE455-DP-CaseStudy\ae40426e-93fa-44c2-9dcf-8274dd8c97cf\scratchpad\fm\WanderCar_DotNet\src\FlemanApi.Tests\bin\Debug\net8.0\FlemanApi.Tests.dll (.NETCoreApp,Version=v8.0)
+VSTest version 17.11.1 (x64)
+
+Starting test execution, please wait...
+A total of 1 test files matched the specified pattern.
+NUnit Adapter 4.5.0.0: Test execution started
+Running all tests in C:\Users\VANI\AppData\Local\Temp\claude\d--clg-sem-7-design-patterns-23CSE455-DP-CaseStudy\ae40426e-93fa-44c2-9dcf-8274dd8c97cf\scratchpad\fm\WanderCar_DotNet\src\FlemanApi.Tests\bin\Debug\net8.0\FlemanApi.Tests.dll
+   NUnit3TestExecutor discovered 201 of 201 NUnit test cases using Current Discovery mode, Non-Explicit run
+  Passed CountByCarTypeAsync_GroupsCountsByCarType [2 s]
+  Passed CountByCarTypeAsync_ScopedToHub_OnlyCountsThatHub [37 ms]
+  Passed CountCapacityAsync_ExcludesUnderMaintenanceCars [18 ms]
+  Passed CountOverlappingAsync_CancelledBooking_IsNotCounted [45 ms]
+  Passed CountOverlappingAsync_ExcludeBookingId_ExcludesThatBooking [4 ms]
+  Passed CountOverlappingAsync_NonOverlappingDateRange_IsNotCounted [2 ms]
+  Passed CountOverlappingAsync_OverlappingActiveBooking_IsCounted [1 ms]
+  Passed AddAsync_ThenSaveChanges_PersistsEntity [26 ms]
+  Passed ExistsAsync_MatchingEntity_ReturnsTrue [14 ms]
+  Passed ExistsAsync_NoMatch_ReturnsFalse [4 ms]
+  Passed FindAsync_MatchesPredicate_ReturnsFilteredEntities [11 ms]
+  Passed FirstOrDefaultAsync_NoMatch_ReturnsNull [12 ms]
+  Passed GetAllAsync_ReturnsEveryEntity [1 ms]
+  Passed GetByIdAsync_ExistingId_ReturnsEntity [4 ms]
+  Passed GetByIdAsync_MissingId_ReturnsNull [5 ms]
+  Passed Remove_ThenSaveChanges_DeletesEntity [8 ms]
+  Passed Update_ThenSaveChanges_PersistsModifiedValues [1 ms]
+  Passed GetAddonsAsync_NoAddons_ReturnsEmptyList [277 ms]
+  Passed GetAddonsAsync_ReturnsAllAddonsMappedToDto [8 ms]
+  Passed CreateAirportAsync_DuplicateCode_ThrowsConflict [25 ms]
+  Passed CreateAirportAsync_DuplicateCodeDifferentCase_ThrowsConflict [5 ms]
+  Passed CreateAirportAsync_NewCode_CreatesAirport [15 ms]
+  Passed CreateAirportAsync_UnknownCity_ThrowsResourceNotFound [9 ms]
+  Passed CreateAirportAsync_UnknownHub_ThrowsResourceNotFound [7 ms]
+  Passed CreateAirportAsync_UnknownState_ThrowsResourceNotFound [6 ms]
+  Passed DeleteAirportAsync_ExistingId_RemovesAirport [5 ms]
+  Passed DeleteAirportAsync_MissingId_ThrowsResourceNotFound [8 ms]
+  Passed GetAirportByIdAsync_MissingId_ThrowsResourceNotFound [4 ms]
+  Passed GetAllAirportsAsync_ReturnsAllAirports [9 ms]
+  Passed SearchAirportsAsync_EmptyQuery_ReturnsUpToSixAirports [20 ms]
+  Passed SearchAirportsAsync_MatchingCode_ReturnsMatch [6 ms]
+  Passed SearchAirportsAsync_NoMatch_ReturnsEmpty [5 ms]
+  Passed UpdateAirportAsync_CodeCollidesWithAnotherAirport_ThrowsConflict [5 ms]
+  Passed UpdateAirportAsync_MissingId_ThrowsResourceNotFound [3 ms]
+  Passed UpdateAirportAsync_SameAirportSameCode_DoesNotThrow [7 ms]
+  Passed Constructor_SubscribesInjectedObservers_NotifiesInRegistrationOrder [7 ms]
+  Passed PublishAsync_NoObservers_DoesNothing [1 ms]
+  Passed PublishAsync_ObserverThrows_LogsWarningAndStillNotifiesTheOthers [5 ms]
+  Passed Subscribe_AddsObserver_WhichReceivesLaterEvents [< 1 ms]
+  Passed Subscribe_SameObserverTwice_IsNotifiedOnce [< 1 ms]
+  Passed Unsubscribe_RemovesObserver_OthersStillNotified [< 1 ms]
+  Passed AuditObserver_WritesOneStructuredInformationEntryPerEvent(CREATED) [3 ms]
+  Passed AuditObserver_WritesOneStructuredInformationEntryPerEvent(MODIFIED) [< 1 ms]
+  Passed AuditObserver_WritesOneStructuredInformationEntryPerEvent(CANCELLED) [< 1 ms]
+  Passed EmailObserver_Cancelled_SendsOneCancellationEmail [15 ms]
+  Passed EmailObserver_Created_SendsExactlyTheBaselineSubjectAndBody [6 ms]
+  Passed EmailObserver_Modified_SendsOneUpdateEmail [11 ms]
+  Passed EmailObserver_NoCustomerEmail_SendsNothing [1 ms]
+  Passed CancelBookingAsync_QueuesOneCancellationEmail_AndWritesOneAuditEntry [75 ms]
+  Passed CreateBookingAsync_ObserverThrows_BookingStillSucceeds_AndLaterObserversRun [10 ms]
+  Passed CreateBookingAsync_QueuesOneConfirmationEmail_WithBaselineRecipientSubjectAndBody [7 ms]
+  Passed ModifyBookingAsync_QueuesOneUpdateEmail_AndWritesOneAuditEntry [14 ms]
+  Passed ModifyBookingAsync_Rejected_PublishesNoEvent [9 ms]
+  Passed CancelBookingAsync_CarAssigned_ReleasesCarBackToAvailable [14 ms]
+  Passed CancelBookingAsync_NoCarAssigned_DoesNotTouchAnyCar [12 ms]
+  Passed CancelBookingAsync_UnknownConfirmationNo_ThrowsResourceNotFound [4 ms]
+  Passed CreateBookingAsync_CapacityExceeded_ThrowsConflict [10 ms]
+  Passed CreateBookingAsync_HappyPath_CreatesConfirmedBookingWithEstimatedAmount [7 ms]
+  Passed CreateBookingAsync_ReturnBeforePickup_ThrowsBadRequest [3 ms]
+  Passed CreateBookingAsync_UnknownCustomer_ThrowsResourceNotFound [3 ms]
+  Passed CreateBookingAsync_WithAddons_AddsAddonAmountToEstimate [7 ms]
+  Passed GetBookingByConfirmationAsync_CustomerAccessingSomeoneElsesBooking_ThrowsForbidden [8 ms]
+  Passed GetBookingByConfirmationAsync_OwningCustomer_Succeeds [8 ms]
+  Passed GetBookingsForCustomerAsync_ExcludesCancelledBookings [14 ms]
+  Passed GetLastBookingForCustomerAsync_NoBookings_ReturnsNull [5 ms]
+  Passed ModifyBookingAsync_AddonsChangeAfterCarAssigned_ThrowsConflict [8 ms]
+  Passed ModifyBookingAsync_CapacityRecheckFails_ThrowsConflict [12 ms]
+  Passed ModifyBookingAsync_CategoryChangeBeforeCarAssigned_ReChecksCapacity [15 ms]
+  Passed ModifyBookingAsync_ChangeCategoryAfterCarAssigned_ThrowsConflict [13 ms]
+  Passed ModifyBookingAsync_ChangePickupDatetimeAfterCarAssigned_ThrowsConflict [9 ms]
+  Passed ModifyBookingAsync_ChangePickupHubAfterCarAssigned_ThrowsConflict [7 ms]
+  Passed ModifyBookingAsync_EmptyAddonsList_RemovesAllAddonLines [15 ms]
+  Passed ModifyBookingAsync_NullAddons_KeepsExistingAddonLines [10 ms]
+  Passed ModifyBookingAsync_UnknownConfirmationNo_ThrowsResourceNotFound [4 ms]
+  Passed GetCustomerByIdAsync_MissingCustomer_ReturnsNull [5 ms]
+  Passed IssueCustomerToken_DelegatesToJwtTokenService [4 ms]
+  Passed LoginAsync_CorrectPassword_ReturnsAuthResponseWithToken [562 ms]
+  Passed LoginAsync_EmailIsCaseInsensitive [481 ms]
+  Passed LoginAsync_NoPasswordHashOnGuestAccount_ThrowsUnauthorized [4 ms]
+  Passed LoginAsync_UnknownEmail_ThrowsUnauthorized [7 ms]
+  Passed LoginAsync_WrongPassword_ThrowsUnauthorized [487 ms]
+  Passed RegisterAsync_BrandNewCustomer_CreatesCustomerAndSendsWelcomeEmail [272 ms]
+  Passed RegisterAsync_DuplicateEmailWithPassword_ThrowsConflict [338 ms]
+  Passed RegisterAsync_GuestAccountUpgradePath_UpgradesInPlace [251 ms]
+  Passed RegisterAsync_WelcomeEmailThrows_StillReturnsAuthResponse [236 ms]
+  Passed StaffLoginAsync_CorrectHardcodedCredentials_ReturnsStaffAuthResponse [4 ms]
+  Passed StaffLoginAsync_UsernameIsCaseInsensitive [3 ms]
+  Passed StaffLoginAsync_WrongCredentials_ThrowsUnauthorized [6 ms]
+  Passed StaffLoginAsync_WrongUsername_ThrowsUnauthorized [4 ms]
+  Passed UpdateCustomerAsync_MissingCustomer_ThrowsResourceNotFound [5 ms]
+  Passed UpdateCustomerAsync_PartialPatch_OnlyUpdatesProvidedFields [6 ms]
+  Passed UpdateCustomerAsync_UnknownCityId_ThrowsResourceNotFound [5 ms]
+  Passed UpsertGuestCustomerAsync_ExistingCustomerBlankPhoneInRequest_KeepsOldPhone [9 ms]
+  Passed UpsertGuestCustomerAsync_ExistingEmail_MergesIntoExistingCustomer [7 ms]
+  Passed UpsertGuestCustomerAsync_NewEmail_CreatesGuestCustomer [6 ms]
+  Passed SendBookingInvoiceAsync_EnqueuesWorkItem_DoesNotSendSynchronously [2 ms]
+  Passed SendEmailAsync_EnqueuedWorkItem_CallsSendPlainAsyncOnSender [1 ms]
+  Passed SendEmailAsync_EnqueuesWorkItem_DoesNotSendSynchronously [< 1 ms]
+  Passed CreateAsync_AddsEntityAndReturnsMappedDto [9 ms]
+  Passed DeleteAsync_ExistingId_RemovesEntity [6 ms]
+  Passed DeleteAsync_MissingId_ThrowsResourceNotFound [4 ms]
+  Passed GetAllAsync_ReturnsAllMappedDtos [6 ms]
+  Passed GetByIdAsync_ExistingId_ReturnsMappedDto [4 ms]
+  Passed GetByIdAsync_MissingId_ReturnsNull [2 ms]
+  Passed UpdateAsync_ExistingId_MapsDtoOntoEntityAndSaves [6 ms]
+  Passed UpdateAsync_MissingId_ThrowsResourceNotFound [3 ms]
+  Passed FindHubForAirportAsync_ExistingAirport_ReturnsHub [6 ms]
+  Passed FindHubForAirportAsync_MissingAirport_ReturnsNull [5 ms]
+  Passed FindHubForCityAsync_ExistingCity_ReturnsHub [10 ms]
+  Passed FindHubForCityAsync_NoHubForCity_ReturnsNull [4 ms]
+  Passed GetAllHubsAsync_ReturnsAllHubs [8 ms]
+  Passed GetCitiesByStateAsync_NullStateId_ReturnsAllCities [8 ms]
+  Passed GetCitiesByStateAsync_WithStateId_FiltersToThatState [9 ms]
+  Passed GetCityByIdAsync_MissingId_ThrowsResourceNotFound [7 ms]
+  Passed GetHubByIdAsync_MissingId_ThrowsResourceNotFound [9 ms]
+  Passed GetStateByIdAsync_ExistingId_ReturnsState [9 ms]
+  Passed GetStateByIdAsync_MissingId_ThrowsResourceNotFound [4 ms]
+  Passed GetStatesAsync_ReturnsAllStates [5 ms]
+  Passed GetAvailableCarsForHandoverAsync_FiltersByHubAndCategoryAndAvailability [16 ms]
+  Passed GetDashboardAsync_MapsCarTypeCountsToDashboardDto [5 ms]
+  Passed HandoverVehicleAsync_AlreadyHandedOver_ThrowsConflict [5 ms]
+  Passed HandoverVehicleAsync_CarNotAvailable_ThrowsConflict [4 ms]
+  Passed HandoverVehicleAsync_CarNotFound_ThrowsResourceNotFound [6 ms]
+  Passed HandoverVehicleAsync_HappyPath_AssignsCarAndMarksOngoing [6 ms]
+  Passed HandoverVehicleAsync_NoCarIdInRequest_ThrowsBadRequest [24 ms]
+  Passed HandoverVehicleAsync_UnknownConfirmationNo_ThrowsResourceNotFound [7 ms]
+  Passed HandoverVehicleAsync_WrongCategory_ThrowsConflict [5 ms]
+  Passed HandoverVehicleAsync_WrongHub_ThrowsConflict [5 ms]
+  Failed ProcessReturnAsync_CreatesInvoiceHeaderAndDetails [394 ms]
+  Error Message:
+   Expected result.AddonAmount to be 40.0, but found 710.0 (difference of 670).
+  Stack Trace:
+     at FluentAssertions.Execution.LateBoundTestFramework.Throw(String message)
+   at FluentAssertions.Execution.TestFrameworkProvider.Throw(String message)
+   at FluentAssertions.Execution.DefaultAssertionStrategy.HandleFailure(String message)
+   at FluentAssertions.Execution.AssertionScope.FailWith(Func`1 failReasonFunc)
+   at FluentAssertions.Execution.AssertionScope.FailWith(Func`1 failReasonFunc)
+   at FluentAssertions.Execution.AssertionScope.FailWith(String message, Object[] args)
+   at FluentAssertions.Numeric.NumericAssertions`2.Be(T expected, String because, Object[] becauseArgs)
+   at FlemanApi.Tests.Services.StaffServiceTests.ProcessReturnAsync_CreatesInvoiceHeaderAndDetails() in C:\Users\VANI\AppData\Local\Temp\claude\d--clg-sem-7-design-patterns-23CSE455-DP-CaseStudy\ae40426e-93fa-44c2-9dcf-8274dd8c97cf\scratchpad\fm\WanderCar_DotNet\src\FlemanApi.Tests\Services\StaffServiceTests.cs:line 326
+   at NUnit.Framework.Internal.TaskAwaitAdapter.GenericAdapter`1.GetResult()
+   at NUnit.Framework.Internal.AsyncToSyncAdapter.Await(Func`1 invoke)
+   at NUnit.Framework.Internal.Commands.TestMethodCommand.RunTestMethod(TestExecutionContext context)
+   at NUnit.Framework.Internal.Commands.TestMethodCommand.Execute(TestExecutionContext context)
+   at NUnit.Framework.Internal.Commands.BeforeAndAfterTestCommand.<>c__DisplayClass1_0.<Execute>b__0()
+   at NUnit.Framework.Internal.Commands.DelegatingTestCommand.RunTestMethodInThreadAbortSafeZone(TestExecutionContext context, Action action)
+
+
+  Passed ProcessReturnAsync_EmailSendThrows_StillReturnsInvoice [5 ms]
+  Passed ProcessReturnAsync_ExtraMiles_IncreasesOdometer [3 ms]
+  Passed ProcessReturnAsync_FuelReturnedEqualToHandover_NoFuelCharge [3 ms]
+  Passed ProcessReturnAsync_FuelReturnedHigherThanHandover_NoCreditNoCharge [11 ms]
+  Passed ProcessReturnAsync_FuelReturnedLowerThanHandover_ChargesFuelShortfall [9 ms]
+  Passed ProcessReturnAsync_MarksBookingCompleted [10 ms]
+  Passed ProcessReturnAsync_NoExtraMiles_OdometerUnchanged [8 ms]
+  Passed ProcessReturnAsync_NoPaymentType_PaymentStatusIsPending [7 ms]
+  Passed ProcessReturnAsync_NotHandedOverYet_ThrowsConflict [5 ms]
+  Passed ProcessReturnAsync_PartialQuarterShortfall_RoundsDownToWholeQuarters [5 ms]
+  Passed ProcessReturnAsync_PaymentTypeGiven_PaymentStatusIsPaid [4 ms]
+  Passed ProcessReturnAsync_ReleasesCarBackToAvailable [5 ms]
+  Passed ProcessReturnAsync_UnknownConfirmationNo_ThrowsResourceNotFound [5 ms]
+  Passed GetAvailableCarsAsync_BookedCarAtHub_BookableNowFalse [23 ms]
+  Passed GetAvailableCarsAsync_NullHubId_ReturnsAllCarsBookableTrue [13 ms]
+  Passed GetAvailableCarsAsync_WithHubId_BookableNowReflectsCarStatus [7 ms]
+  Passed GetCarByIdAsync_ExistingCar_ReturnsCarWithNestedCarType [6 ms]
+  Passed GetCarByIdAsync_MissingCar_ThrowsResourceNotFound [2 ms]
+  Passed GetCarTypeByIdAsync_MissingCarType_ThrowsResourceNotFound [3 ms]
+  Passed GetCarTypesAsync_ReturnsAllCarTypes [5 ms]
+  Passed GetCarTypesForHubAsync_CapacityMinusOverlap_ComputesAvailableCount [5 ms]
+  Passed GetCarTypesForHubAsync_NoDatesGiven_OverlapIsZero [5 ms]
+  Passed GetCarTypesForHubAsync_NullHubId_ReturnsAllCarTypesWithoutAvailability [4 ms]
+  Passed GetCarTypesForHubAsync_OverlapExceedsCapacity_ClampsToZero [3 ms]
+  Passed CalculateRentalAmount_ExactlySevenDays_UsesOneWeekOnly [< 1 ms]
+  Passed CalculateRentalAmount_ExactlyThirtyDays_UsesOneMonthOnly [< 1 ms]
+  Passed CalculateRentalAmount_FiveDays_UsesDailyRateOnly [< 1 ms]
+  Passed CalculateRentalAmount_NullWeeklyAndMonthlyRate_FallsThroughToDaily [< 1 ms]
+  Passed CalculateRentalAmount_SixtyDays_PacksTwoMonths [< 1 ms]
+  Passed CalculateRentalAmount_TenDays_PacksOneWeekPlusThreeDays [< 1 ms]
+  Passed CalculateRentalAmount_ThirtyFiveDays_PacksOneMonthPlusFiveDays [< 1 ms]
+  Passed CalculateRentalAmount_ZeroWeeklyRate_FallsThroughToDaily [< 1 ms]
+  Passed Validate_NullAddonId_HasError [23 ms]
+  Passed Validate_NullQuantity_Passes [< 1 ms]
+  Passed Validate_QuantityLessThanOne_HasError [< 1 ms]
+  Passed Validate_ValidLine_Passes [< 1 ms]
+  Passed Validate_AirportCodeTooLong_HasError [4 ms]
+  Passed Validate_AirportNameTooLong_HasError [< 1 ms]
+  Passed Validate_EmptyAirportCode_HasError [< 1 ms]
+  Passed Validate_EmptyAirportName_HasError [< 1 ms]
+  Passed Validate_NullCityId_HasError [< 1 ms]
+  Passed Validate_NullHubId_HasError [< 1 ms]
+  Passed Validate_NullStateId_HasError [< 1 ms]
+  Passed Validate_ValidRequest_Passes [< 1 ms]
+  Passed Validate_AddonWithNullAddonId_HasError [8 ms]
+  Passed Validate_AddonWithZeroQuantity_HasError [< 1 ms]
+  Passed Validate_NullAddons_DoesNotValidateAddonRules [< 1 ms]
+  Passed Validate_NullCarTypeId_HasError [< 1 ms]
+  Passed Validate_NullCustomerId_HasError [< 1 ms]
+  Passed Validate_NullPickupDatetime_HasError [< 1 ms]
+  Passed Validate_NullPickupHubId_HasError [< 1 ms]
+  Passed Validate_NullReturnDatetime_HasError [< 1 ms]
+  Passed Validate_ValidAddons_Passes [< 1 ms]
+  Passed Validate_ValidRequest_Passes [< 1 ms]
+  Passed Validate_EmptyEmail_HasError [< 1 ms]
+  Passed Validate_EmptyFirstName_HasError [< 1 ms]
+  Passed Validate_InvalidEmailFormat_HasError [< 1 ms]
+  Passed Validate_ValidRequest_Passes [< 1 ms]
+  Passed Validate_EmptyEmail_HasError [3 ms]
+  Passed Validate_EmptyPassword_HasError [< 1 ms]
+  Passed Validate_InvalidEmailFormat_HasError [< 1 ms]
+  Passed Validate_ValidRequest_Passes [< 1 ms]
+  Passed Validate_EmptyEmail_HasError [4 ms]
+  Passed Validate_EmptyFullName_HasError [< 1 ms]
+  Passed Validate_EmptyPassword_HasError [< 1 ms]
+  Passed Validate_InvalidEmailFormat_HasError [< 1 ms]
+  Passed Validate_PasswordExactlySixCharacters_Passes [< 1 ms]
+  Passed Validate_PasswordTooShort_HasError [< 1 ms]
+NUnit Adapter 4.5.0.0: Test execution complete
+  Passed Validate_ValidRequest_Passes [< 1 ms]
+  Passed Validate_EmptyPassword_HasError [< 1 ms]
+  Passed Validate_EmptyUsername_HasError [< 1 ms]
+  Passed Validate_ValidRequest_Passes [< 1 ms]
+
+Test Run Failed.
+Total tests: 201
+     Passed: 200
+     Failed: 1
+ Total time: 14.6009 Seconds
+# exit code: 1

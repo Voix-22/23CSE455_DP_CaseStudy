@@ -1,0 +1,885 @@
+diff --git a/WanderCar_DotNet/src/FlemanApi.Tests/Services/BookingEventPublisherTests.cs b/WanderCar_DotNet/src/FlemanApi.Tests/Services/BookingEventPublisherTests.cs
+new file mode 100644
+index 0000000..2ababf6
+--- /dev/null
++++ b/WanderCar_DotNet/src/FlemanApi.Tests/Services/BookingEventPublisherTests.cs
+@@ -0,0 +1,115 @@
++using FlemanApi.Service.Notifications;
++using FlemanApi.Tests.TestHelpers;
++using FluentAssertions;
++using Microsoft.Extensions.Logging;
++
++namespace FlemanApi.Tests.Services;
++
++[TestFixture]
++public class BookingEventPublisherTests
++{
++    private List<string> _calls = null!;
++    private ListLogger<BookingEventPublisher> _logger = null!;
++
++    [SetUp]
++    public void SetUp()
++    {
++        _calls = new List<string>();
++        _logger = new ListLogger<BookingEventPublisher>();
++    }
++
++    private static BookingEvent MakeEvent(BookingEventKind kind = BookingEventKind.CREATED) => new(
++        kind, 1, "ABC12345", 1, "Jane Doe", "jane@example.com", "Sedan",
++        new DateTime(2026, 8, 10), new DateTime(2026, 8, 15), 500.0, FlemanApi.Models.BookingStatus.CONFIRMED);
++
++    private sealed class RecordingObserver : IBookingEventObserver
++    {
++        private readonly string _name;
++        private readonly List<string> _calls;
++        public RecordingObserver(string name, List<string> calls) { _name = name; _calls = calls; }
++        public Task OnBookingEventAsync(BookingEvent bookingEvent)
++        {
++            _calls.Add($"{_name}:{bookingEvent.Kind}");
++            return Task.CompletedTask;
++        }
++    }
++
++    private sealed class ThrowingObserver : IBookingEventObserver
++    {
++        public Task OnBookingEventAsync(BookingEvent bookingEvent) => throw new InvalidOperationException("SMTP down");
++    }
++
++    [Test]
++    public async Task Constructor_SubscribesInjectedObservers_NotifiesInRegistrationOrder()
++    {
++        var publisher = new BookingEventPublisher(
++            new IBookingEventObserver[] { new RecordingObserver("first", _calls), new RecordingObserver("second", _calls), new RecordingObserver("third", _calls) },
++            _logger);
++
++        await publisher.PublishAsync(MakeEvent());
++
++        _calls.Should().Equal("first:CREATED", "second:CREATED", "third:CREATED");
++    }
++
++    [Test]
++    public async Task Subscribe_AddsObserver_WhichReceivesLaterEvents()
++    {
++        var publisher = new BookingEventPublisher(Array.Empty<IBookingEventObserver>(), _logger);
++        publisher.Subscribe(new RecordingObserver("late", _calls));
++
++        await publisher.PublishAsync(MakeEvent(BookingEventKind.MODIFIED));
++
++        _calls.Should().Equal("late:MODIFIED");
++    }
++
++    [Test]
++    public async Task Subscribe_SameObserverTwice_IsNotifiedOnce()
++    {
++        var observer = new RecordingObserver("once", _calls);
++        var publisher = new BookingEventPublisher(new IBookingEventObserver[] { observer }, _logger);
++        publisher.Subscribe(observer);
++
++        await publisher.PublishAsync(MakeEvent());
++
++        _calls.Should().Equal("once:CREATED");
++    }
++
++    [Test]
++    public async Task Unsubscribe_RemovesObserver_OthersStillNotified()
++    {
++        var removed = new RecordingObserver("removed", _calls);
++        var kept = new RecordingObserver("kept", _calls);
++        var publisher = new BookingEventPublisher(new IBookingEventObserver[] { removed, kept }, _logger);
++
++        publisher.Unsubscribe(removed);
++        await publisher.PublishAsync(MakeEvent(BookingEventKind.CANCELLED));
++
++        _calls.Should().Equal("kept:CANCELLED");
++    }
++
++    [Test]
++    public async Task PublishAsync_ObserverThrows_LogsWarningAndStillNotifiesTheOthers()
++    {
++        var publisher = new BookingEventPublisher(
++            new IBookingEventObserver[] { new RecordingObserver("before", _calls), new ThrowingObserver(), new RecordingObserver("after", _calls) },
++            _logger);
++
++        var act = () => publisher.PublishAsync(MakeEvent());
++
++        await act.Should().NotThrowAsync();
++        _calls.Should().Equal("before:CREATED", "after:CREATED");
++        _logger.Entries.Should().ContainSingle(e => e.Level == LogLevel.Warning)
++            .Which.Exception.Should().BeOfType<InvalidOperationException>();
++    }
++
++    [Test]
++    public async Task PublishAsync_NoObservers_DoesNothing()
++    {
++        var publisher = new BookingEventPublisher(Array.Empty<IBookingEventObserver>(), _logger);
++
++        var act = () => publisher.PublishAsync(MakeEvent());
++
++        await act.Should().NotThrowAsync();
++        _logger.Entries.Should().BeEmpty();
++    }
++}
+diff --git a/WanderCar_DotNet/src/FlemanApi.Tests/Services/BookingObserverTests.cs b/WanderCar_DotNet/src/FlemanApi.Tests/Services/BookingObserverTests.cs
+new file mode 100644
+index 0000000..2483a43
+--- /dev/null
++++ b/WanderCar_DotNet/src/FlemanApi.Tests/Services/BookingObserverTests.cs
+@@ -0,0 +1,116 @@
++using FlemanApi.Models;
++using FlemanApi.Service;
++using FlemanApi.Service.Notifications;
++using FlemanApi.Tests.TestHelpers;
++using FluentAssertions;
++using Microsoft.Extensions.Logging;
++using Moq;
++
++namespace FlemanApi.Tests.Services;
++
++[TestFixture]
++public class BookingObserverTests
++{
++    private static readonly DateTime Pickup = new(2026, 8, 10, 9, 30, 0);
++    private static readonly DateTime Return = new(2026, 8, 15, 18, 0, 0);
++
++    private static BookingEvent MakeEvent(BookingEventKind kind, string? email = "jane@example.com") => new(
++        kind, 7, "ABC12345", 1, "Jane Doe", email, "Sedan", Pickup, Return, 510.0,
++        kind == BookingEventKind.CANCELLED ? BookingStatus.CANCELLED : BookingStatus.CONFIRMED);
++
++    // Copied verbatim from the baseline BookingService.CreateBookingAsync
++    // (dfc61ab8, Service/BookingService.cs:172-189), with the header/customer/
++    // carType expressions replaced by the same values the event carries.
++    private static string BaselineConfirmationBody(string fullName, string confirmationNo, string carTypeName,
++        DateTime pickup, DateTime returnDt, double? estimatedAmount) => $"""
++                    Dear {fullName},
++
++                    Your booking has been confirmed successfully.
++
++                    Booking Details
++                    -------------------------
++                    Booking No : {confirmationNo}
++                    Vehicle Type : {carTypeName}
++                    Pickup Date : {pickup}
++                    Return Date : {returnDt}
++                    Total Amount : ₹{estimatedAmount:F2}
++
++                    Thank you for choosing Fleeman.
++
++                    Regards,
++                    Fleeman Team
++                    """;
++
++    // ---------- EmailBookingObserver ----------
++
++    [Test]
++    public async Task EmailObserver_Created_SendsExactlyTheBaselineSubjectAndBody()
++    {
++        var email = new Mock<IEmailService>();
++        var observer = new EmailBookingObserver(email.Object);
++
++        await observer.OnBookingEventAsync(MakeEvent(BookingEventKind.CREATED));
++
++        var expectedBody = BaselineConfirmationBody("Jane Doe", "ABC12345", "Sedan", Pickup, Return, 510.0);
++        email.Verify(e => e.SendEmailAsync("jane@example.com", "Booking Confirmation - Fleeman", expectedBody), Times.Once);
++        email.VerifyNoOtherCalls();
++    }
++
++    [Test]
++    public async Task EmailObserver_Modified_SendsOneUpdateEmail()
++    {
++        var email = new Mock<IEmailService>();
++        var observer = new EmailBookingObserver(email.Object);
++
++        await observer.OnBookingEventAsync(MakeEvent(BookingEventKind.MODIFIED));
++
++        email.Verify(e => e.SendEmailAsync("jane@example.com", "Booking Updated - Fleeman",
++            It.Is<string>(b => b.Contains("ABC12345") && b.Contains("has been updated") && b.Contains("₹510.00"))), Times.Once);
++        email.VerifyNoOtherCalls();
++    }
++
++    [Test]
++    public async Task EmailObserver_Cancelled_SendsOneCancellationEmail()
++    {
++        var email = new Mock<IEmailService>();
++        var observer = new EmailBookingObserver(email.Object);
++
++        await observer.OnBookingEventAsync(MakeEvent(BookingEventKind.CANCELLED));
++
++        email.Verify(e => e.SendEmailAsync("jane@example.com", "Booking Cancelled - Fleeman",
++            It.Is<string>(b => b.Contains("ABC12345") && b.Contains("has been cancelled"))), Times.Once);
++        email.VerifyNoOtherCalls();
++    }
++
++    [Test]
++    public async Task EmailObserver_NoCustomerEmail_SendsNothing()
++    {
++        var email = new Mock<IEmailService>();
++        var observer = new EmailBookingObserver(email.Object);
++
++        await observer.OnBookingEventAsync(MakeEvent(BookingEventKind.CREATED, email: null));
++
++        email.VerifyNoOtherCalls();
++    }
++
++    // ---------- AuditLogBookingObserver ----------
++
++    [TestCase(BookingEventKind.CREATED)]
++    [TestCase(BookingEventKind.MODIFIED)]
++    [TestCase(BookingEventKind.CANCELLED)]
++    public async Task AuditObserver_WritesOneStructuredInformationEntryPerEvent(BookingEventKind kind)
++    {
++        var logger = new ListLogger<AuditLogBookingObserver>();
++        var observer = new AuditLogBookingObserver(logger);
++
++        await observer.OnBookingEventAsync(MakeEvent(kind));
++
++        var entry = logger.Entries.Should().ContainSingle().Subject;
++        entry.Level.Should().Be(LogLevel.Information);
++        entry.Message.Should().Contain(kind.ToString()).And.Contain("ABC12345");
++        entry.Properties["EventKind"].Should().Be(kind);
++        entry.Properties["ConfirmationNo"].Should().Be("ABC12345");
++        entry.Properties["BookingId"].Should().Be(7L);
++        entry.Properties["CustomerId"].Should().Be(1L);
++    }
++}
+diff --git a/WanderCar_DotNet/src/FlemanApi.Tests/Services/BookingServiceNotificationTests.cs b/WanderCar_DotNet/src/FlemanApi.Tests/Services/BookingServiceNotificationTests.cs
+new file mode 100644
+index 0000000..6d539c8
+--- /dev/null
++++ b/WanderCar_DotNet/src/FlemanApi.Tests/Services/BookingServiceNotificationTests.cs
+@@ -0,0 +1,213 @@
++using FlemanApi.DTO;
++using FlemanApi.Exceptions;
++using FlemanApi.Models;
++using FlemanApi.Repository;
++using FlemanApi.Security;
++using FlemanApi.Service;
++using FlemanApi.Service.Notifications;
++using FlemanApi.Tests.TestHelpers;
++using FluentAssertions;
++using Microsoft.Extensions.Logging.Abstractions;
++using Moq;
++
++namespace FlemanApi.Tests.Services;
++
++// End-to-end CH04 wiring: BookingService -> BookingEventPublisher ->
++// EmailBookingObserver -> real EmailService -> (mocked) background queue,
++// plus AuditLogBookingObserver, in the same order as Program.cs.
++[TestFixture]
++public class BookingServiceNotificationTests
++{
++    private List<BookingHeader> _bookings = null!;
++    private Mock<IEmailBackgroundQueue> _queueMock = null!;
++    private List<Func<IEmailSender, CancellationToken, Task>> _queued = null!;
++    private ListLogger<AuditLogBookingObserver> _auditLogger = null!;
++    private Func<IBookingEventPublisher, BookingService> _buildService = null!;
++    private BookingService _service = null!;
++
++    [SetUp]
++    public void SetUp()
++    {
++        _bookings = new List<BookingHeader>();
++        var bookingDetails = new List<BookingDetail>();
++        var carTypes = new List<CarType> { new() { CarTypeId = 1, CarTypeName = "Sedan", DailyRate = 100.0 } };
++        var customers = new List<Customer> { new() { CustomerId = 1, FullName = "Jane Doe", Email = "jane@example.com" } };
++        var hubs = new List<Hub>
++        {
++            new() { HubId = 1, HubName = "Pickup Hub", CityId = 1, StateId = 1, Pincode = "400001", ContactNo = "111" },
++            new() { HubId = 2, HubName = "Drop Hub", CityId = 1, StateId = 1, Pincode = "400002", ContactNo = "222" },
++        };
++
++        var availability = new Mock<IAvailabilityRepository>();
++        availability.Setup(a => a.CountCapacityAsync(It.IsAny<long>(), It.IsAny<long>())).ReturnsAsync(5);
++        availability.Setup(a => a.CountOverlappingAsync(It.IsAny<long>(), It.IsAny<long>(), It.IsAny<DateTime>(), It.IsAny<DateTime>(), It.IsAny<long?>()))
++            .ReturnsAsync(0);
++
++        var vehicleService = new Mock<IVehicleService>();
++        vehicleService.Setup(v => v.GetCarTypeByIdAsync(It.IsAny<long>()))
++            .ReturnsAsync((long id) => new CarTypeDTO { CarTypeId = id, CarTypeName = "Sedan", DailyRate = 100.0 });
++        var customerService = new Mock<ICustomerService>();
++        customerService.Setup(c => c.GetCustomerByIdAsync(It.IsAny<long>()))
++            .ReturnsAsync((long id) => new CustomerDTO { CustomerId = id, FullName = "Jane Doe", Email = "jane@example.com" });
++        var locationService = new Mock<ILocationService>();
++        locationService.Setup(l => l.GetHubByIdAsync(It.IsAny<long>()))
++            .ReturnsAsync((long id) => new HubDTO { HubId = id, HubName = $"Hub {id}" });
++        var addonService = new Mock<IAddonService>();
++        addonService.Setup(a => a.GetAddonsAsync()).ReturnsAsync((IReadOnlyList<AddonDTO>)new List<AddonDTO>());
++
++        var currentUser = new Mock<IAuthenticatedUserAccessor>();
++        currentUser.SetupGet(c => c.IsAuthenticated).Returns(true);
++        currentUser.Setup(c => c.GetCurrentRole()).Returns("STAFF");
++        currentUser.Setup(c => c.GetCurrentUserId()).Returns(1);
++
++        _queued = new List<Func<IEmailSender, CancellationToken, Task>>();
++        _queueMock = new Mock<IEmailBackgroundQueue>();
++        _queueMock.Setup(q => q.Enqueue(It.IsAny<Func<IEmailSender, CancellationToken, Task>>()))
++            .Callback<Func<IEmailSender, CancellationToken, Task>>(item => _queued.Add(item));
++
++        _auditLogger = new ListLogger<AuditLogBookingObserver>();
++        _buildService = publisher => new BookingService(
++            MockRepositoryFactory.Create<BookingHeader, long>(_bookings, b => b.BookingId, (b, id) => b.BookingId = id).Object,
++            MockRepositoryFactory.Create<BookingDetail, long>(bookingDetails, d => d.BookingDetailId, (d, id) => d.BookingDetailId = id).Object,
++            MockRepositoryFactory.Create<CarType, long>(carTypes, ct => ct.CarTypeId).Object,
++            MockRepositoryFactory.Create<Customer, long>(customers, c => c.CustomerId).Object,
++            MockRepositoryFactory.Create<Hub, long>(hubs, h => h.HubId).Object,
++            MockRepositoryFactory.Create<Addon, long>(new List<Addon>(), a => a.AddonId).Object,
++            MockRepositoryFactory.Create<Car, long>(new List<Car>(), c => c.CarId).Object,
++            availability.Object,
++            vehicleService.Object,
++            customerService.Object,
++            locationService.Object,
++            addonService.Object,
++            publisher,
++            currentUser.Object,
++            NullLogger<BookingService>.Instance);
++
++        _service = _buildService(new BookingEventPublisher(
++            new IBookingEventObserver[] { MakeEmailObserver(), new AuditLogBookingObserver(_auditLogger) },
++            NullLogger<BookingEventPublisher>.Instance));
++    }
++
++    private EmailBookingObserver MakeEmailObserver() => new(new EmailService(_queueMock.Object));
++
++    private static CreateBookingRequest MakeCreateRequest() => new()
++    {
++        CustomerId = 1,
++        CarTypeId = 1,
++        PickupHubId = 1,
++        DropHubId = 2,
++        PickupDatetime = new DateTime(2026, 8, 10),
++        ReturnDatetime = new DateTime(2026, 8, 15),
++    };
++
++    // Runs every queued work item against a mock sender, i.e. what
++    // EmailQueueHostedService would do, and returns that sender.
++    private async Task<Mock<IEmailSender>> DrainQueueAsync()
++    {
++        var sender = new Mock<IEmailSender>();
++        foreach (var item in _queued) await item(sender.Object, CancellationToken.None);
++        return sender;
++    }
++
++    [Test]
++    public async Task CreateBookingAsync_QueuesOneConfirmationEmail_WithBaselineRecipientSubjectAndBody()
++    {
++        var result = await _service.CreateBookingAsync(MakeCreateRequest());
++
++        var header = _bookings.Single();
++        var baselineBody = $"""
++                    Dear Jane Doe,
++
++                    Your booking has been confirmed successfully.
++
++                    Booking Details
++                    -------------------------
++                    Booking No : {header.ConfirmationNo}
++                    Vehicle Type : Sedan
++                    Pickup Date : {header.PickupDatetime}
++                    Return Date : {header.ReturnDatetime}
++                    Total Amount : ₹{header.EstimatedAmount:F2}
++
++                    Thank you for choosing Fleeman.
++
++                    Regards,
++                    Fleeman Team
++                    """;
++
++        result.ConfirmationNo.Should().Be(header.ConfirmationNo);
++        _queued.Should().ContainSingle();
++        var sender = await DrainQueueAsync();
++        sender.Verify(s => s.SendPlainAsync("jane@example.com", "Booking Confirmation - Fleeman", baselineBody), Times.Once);
++        _auditLogger.Entries.Should().ContainSingle().Which.Properties["EventKind"].Should().Be(BookingEventKind.CREATED);
++    }
++
++    [Test]
++    public async Task ModifyBookingAsync_QueuesOneUpdateEmail_AndWritesOneAuditEntry()
++    {
++        var created = await _service.CreateBookingAsync(MakeCreateRequest());
++        _queued.Clear();
++        _auditLogger.Entries.Clear();
++
++        await _service.ModifyBookingAsync(created.ConfirmationNo, new ModifyBookingRequest { ReturnDatetime = new DateTime(2026, 8, 17) });
++
++        _queued.Should().ContainSingle();
++        var sender = await DrainQueueAsync();
++        sender.Verify(s => s.SendPlainAsync("jane@example.com", "Booking Updated - Fleeman", It.IsAny<string>()), Times.Once);
++        var audit = _auditLogger.Entries.Should().ContainSingle().Subject;
++        audit.Properties["EventKind"].Should().Be(BookingEventKind.MODIFIED);
++        audit.Properties["ConfirmationNo"].Should().Be(created.ConfirmationNo);
++    }
++
++    [Test]
++    public async Task CancelBookingAsync_QueuesOneCancellationEmail_AndWritesOneAuditEntry()
++    {
++        var created = await _service.CreateBookingAsync(MakeCreateRequest());
++        _queued.Clear();
++        _auditLogger.Entries.Clear();
++
++        await _service.CancelBookingAsync(created.ConfirmationNo);
++
++        _queued.Should().ContainSingle();
++        var sender = await DrainQueueAsync();
++        sender.Verify(s => s.SendPlainAsync("jane@example.com", "Booking Cancelled - Fleeman", It.IsAny<string>()), Times.Once);
++        var audit = _auditLogger.Entries.Should().ContainSingle().Subject;
++        audit.Properties["EventKind"].Should().Be(BookingEventKind.CANCELLED);
++        audit.Properties["BookingStatus"].Should().Be(BookingStatus.CANCELLED);
++    }
++
++    private sealed class ThrowingObserver : IBookingEventObserver
++    {
++        public Task OnBookingEventAsync(BookingEvent bookingEvent) => throw new InvalidOperationException("boom");
++    }
++
++    [Test]
++    public async Task CreateBookingAsync_ObserverThrows_BookingStillSucceeds_AndLaterObserversRun()
++    {
++        // The failing observer is first, so the e-mail and audit observers
++        // only run if the publisher isolates the failure.
++        var service = _buildService(new BookingEventPublisher(
++            new IBookingEventObserver[] { new ThrowingObserver(), MakeEmailObserver(), new AuditLogBookingObserver(_auditLogger) },
++            NullLogger<BookingEventPublisher>.Instance));
++
++        var result = await service.CreateBookingAsync(MakeCreateRequest());
++
++        result.BookingStatus.Should().Be("CONFIRMED");
++        _bookings.Should().ContainSingle();
++        _queued.Should().ContainSingle();
++        _auditLogger.Entries.Should().ContainSingle();
++    }
++
++    [Test]
++    public async Task ModifyBookingAsync_Rejected_PublishesNoEvent()
++    {
++        var created = await _service.CreateBookingAsync(MakeCreateRequest());
++        _queued.Clear();
++        _auditLogger.Entries.Clear();
++
++        var act = () => _service.ModifyBookingAsync(created.ConfirmationNo, new ModifyBookingRequest { PickupHubId = 99 });
++
++        await act.Should().ThrowAsync<ResourceNotFoundException>();
++        _queued.Should().BeEmpty();
++        _auditLogger.Entries.Should().BeEmpty();
++    }
++}
+diff --git a/WanderCar_DotNet/src/FlemanApi.Tests/Services/BookingServiceTests.cs b/WanderCar_DotNet/src/FlemanApi.Tests/Services/BookingServiceTests.cs
+index b7bb873..5683631 100644
+--- a/WanderCar_DotNet/src/FlemanApi.Tests/Services/BookingServiceTests.cs
++++ b/WanderCar_DotNet/src/FlemanApi.Tests/Services/BookingServiceTests.cs
+@@ -99,7 +99,14 @@ public class BookingServiceTests
+             _customerServiceMock.Object,
+             _locationServiceMock.Object,
+             _addonServiceMock.Object,
+-            _emailServiceMock.Object,
++            // CH04: the only edit to this file. The real publisher + real e-mail
++            // observer keep CreateBookingAsync calling _emailServiceMock as before.
++            new FlemanApi.Service.Notifications.BookingEventPublisher(
++                new FlemanApi.Service.Notifications.IBookingEventObserver[]
++                {
++                    new FlemanApi.Service.Notifications.EmailBookingObserver(_emailServiceMock.Object),
++                },
++                NullLogger<FlemanApi.Service.Notifications.BookingEventPublisher>.Instance),
+             _currentUserMock.Object,
+             NullLogger<BookingService>.Instance);
+     }
+diff --git a/WanderCar_DotNet/src/FlemanApi.Tests/TestHelpers/ListLogger.cs b/WanderCar_DotNet/src/FlemanApi.Tests/TestHelpers/ListLogger.cs
+new file mode 100644
+index 0000000..9f31ccb
+--- /dev/null
++++ b/WanderCar_DotNet/src/FlemanApi.Tests/TestHelpers/ListLogger.cs
+@@ -0,0 +1,25 @@
++using Microsoft.Extensions.Logging;
++
++namespace FlemanApi.Tests.TestHelpers;
++
++// Minimal ILogger<T> that records every entry, including the structured
++// properties, so tests can assert on what was logged without mocking the
++// generic Log<TState> call.
++public sealed class ListLogger<T> : ILogger<T>
++{
++    public sealed record Entry(LogLevel Level, string Message, Exception? Exception, IReadOnlyDictionary<string, object?> Properties);
++
++    public List<Entry> Entries { get; } = new();
++
++    public IDisposable? BeginScope<TState>(TState state) where TState : notnull => null;
++
++    public bool IsEnabled(LogLevel logLevel) => true;
++
++    public void Log<TState>(LogLevel logLevel, EventId eventId, TState state, Exception? exception, Func<TState, Exception?, string> formatter)
++    {
++        var properties = state is IEnumerable<KeyValuePair<string, object?>> pairs
++            ? pairs.ToDictionary(p => p.Key, p => p.Value)
++            : new Dictionary<string, object?>();
++        Entries.Add(new Entry(logLevel, formatter(state, exception), exception, properties));
++    }
++}
+diff --git a/WanderCar_DotNet/src/FlemanApi/Program.cs b/WanderCar_DotNet/src/FlemanApi/Program.cs
+index ec2283e..28eab02 100644
+--- a/WanderCar_DotNet/src/FlemanApi/Program.cs
++++ b/WanderCar_DotNet/src/FlemanApi/Program.cs
+@@ -208,6 +208,13 @@ builder.Services.AddHttpClient<IJavaMicroserviceClient, JavaMicroserviceClient>(
+     client.Timeout = TimeSpan.FromSeconds(10);
+ });
+ 
++// ---- CH04: booking lifecycle notifications (Observer) -------------------
++// Observers run in registration order. To add a reaction, register another
++// IBookingEventObserver here; BookingService does not change.
++builder.Services.AddScoped<FlemanApi.Service.Notifications.IBookingEventObserver, FlemanApi.Service.Notifications.EmailBookingObserver>();
++builder.Services.AddScoped<FlemanApi.Service.Notifications.IBookingEventObserver, FlemanApi.Service.Notifications.AuditLogBookingObserver>();
++builder.Services.AddScoped<FlemanApi.Service.Notifications.IBookingEventPublisher, FlemanApi.Service.Notifications.BookingEventPublisher>();
++
+ var app = builder.Build();
+ 
+ // ---- HTTP pipeline ------------------------------------------------------
+diff --git a/WanderCar_DotNet/src/FlemanApi/Service/BookingService.cs b/WanderCar_DotNet/src/FlemanApi/Service/BookingService.cs
+index c829922..e7d8b22 100644
+--- a/WanderCar_DotNet/src/FlemanApi/Service/BookingService.cs
++++ b/WanderCar_DotNet/src/FlemanApi/Service/BookingService.cs
+@@ -5,6 +5,7 @@ using FlemanApi.Exceptions;
+ using FlemanApi.Models;
+ using FlemanApi.Repository;
+ using FlemanApi.Security;
++using FlemanApi.Service.Notifications;
+ using FlemanApi.Util;
+ using Microsoft.Extensions.Logging;
+ 
+@@ -37,7 +38,7 @@ public class BookingService : IBookingService
+     private readonly ICustomerService _customerService;
+     private readonly ILocationService _locationService;
+     private readonly IAddonService _addonService;
+-    private readonly IEmailService _emailService;
++    private readonly IBookingEventPublisher _bookingEvents;
+     private readonly IAuthenticatedUserAccessor _currentUser;
+     private readonly ILogger<BookingService> _logger;
+ 
+@@ -54,7 +55,7 @@ public class BookingService : IBookingService
+         ICustomerService customerService,
+         ILocationService locationService,
+         IAddonService addonService,
+-        IEmailService emailService,
++        IBookingEventPublisher bookingEvents,
+         IAuthenticatedUserAccessor currentUser,
+         ILogger<BookingService> logger)
+     {
+@@ -70,7 +71,7 @@ public class BookingService : IBookingService
+         _customerService = customerService;
+         _locationService = locationService;
+         _addonService = addonService;
+-        _emailService = emailService;
++        _bookingEvents = bookingEvents;
+         _currentUser = currentUser;
+         _logger = logger;
+     }
+@@ -164,36 +165,7 @@ public class BookingService : IBookingService
+         header.EstimatedAmount = rentalAmount + addonAmount;
+         await _bookings.SaveChangesAsync();
+ 
+-        try
+-        {
+-            var customer = await _customers.GetByIdAsync(header.CustomerId);
+-            if (customer is not null)
+-            {
+-                var body = $"""
+-                    Dear {customer.FullName},
+-
+-                    Your booking has been confirmed successfully.
+-
+-                    Booking Details
+-                    -------------------------
+-                    Booking No : {header.ConfirmationNo}
+-                    Vehicle Type : {carType.CarTypeName}
+-                    Pickup Date : {header.PickupDatetime}
+-                    Return Date : {header.ReturnDatetime}
+-                    Total Amount : ₹{header.EstimatedAmount:F2}
+-
+-                    Thank you for choosing Fleeman.
+-
+-                    Regards,
+-                    Fleeman Team
+-                    """;
+-                await _emailService.SendEmailAsync(customer.Email, "Booking Confirmation - Fleeman", body);
+-            }
+-        }
+-        catch (Exception ex)
+-        {
+-            _logger.LogWarning(ex, "Failed to send booking confirmation email for {ConfirmationNo}", header.ConfirmationNo);
+-        }
++        await PublishBookingEventAsync(BookingEventKind.CREATED, header);
+ 
+         _logger.LogInformation("Booking process completed, confirmationNo={ConfirmationNo}", header.ConfirmationNo);
+         return await ToResponseDtoAsync(header);
+@@ -317,6 +289,7 @@ public class BookingService : IBookingService
+         header.EstimatedAmount = rentalAmount + addonAmount;
+ 
+         await _bookings.SaveChangesAsync();
++        await PublishBookingEventAsync(BookingEventKind.MODIFIED, header);
+         return await ToResponseDtoAsync(header);
+     }
+ 
+@@ -340,6 +313,7 @@ public class BookingService : IBookingService
+         }
+ 
+         await _bookings.SaveChangesAsync();
++        await PublishBookingEventAsync(BookingEventKind.CANCELLED, header);
+         return await ToResponseDtoAsync(header);
+     }
+ 
+@@ -357,6 +331,35 @@ public class BookingService : IBookingService
+         }
+     }
+ 
++    // Builds the event snapshot and hands it to the subject. Observer
++    // failures are already isolated by the publisher; this try/catch keeps
++    // the baseline guarantee that a failed customer/car-type lookup for the
++    // notification never fails a booking that is already saved.
++    private async Task PublishBookingEventAsync(BookingEventKind kind, BookingHeader header)
++    {
++        try
++        {
++            var customer = await _customers.GetByIdAsync(header.CustomerId);
++            var carType = await _carTypes.GetByIdAsync(header.CarTypeId);
++            await _bookingEvents.PublishAsync(new BookingEvent(
++                kind,
++                header.BookingId,
++                header.ConfirmationNo,
++                header.CustomerId,
++                customer?.FullName,
++                customer?.Email,
++                carType?.CarTypeName,
++                header.PickupDatetime,
++                header.ReturnDatetime,
++                header.EstimatedAmount,
++                header.BookingStatus));
++        }
++        catch (Exception ex)
++        {
++            _logger.LogWarning(ex, "Failed to publish booking {EventKind} event for {ConfirmationNo}", kind, header.ConfirmationNo);
++        }
++    }
++
+     private async Task<BookingHeader> FindHeaderAsync(string confirmationNo)
+     {
+         var lower = confirmationNo.ToLower();
+diff --git a/WanderCar_DotNet/src/FlemanApi/Service/Notifications/AuditLogBookingObserver.cs b/WanderCar_DotNet/src/FlemanApi/Service/Notifications/AuditLogBookingObserver.cs
+new file mode 100644
+index 0000000..d3fd5c2
+--- /dev/null
++++ b/WanderCar_DotNet/src/FlemanApi/Service/Notifications/AuditLogBookingObserver.cs
+@@ -0,0 +1,23 @@
++using Microsoft.Extensions.Logging;
++
++namespace FlemanApi.Service.Notifications;
++
++// ConcreteObserver: one structured log entry per booking event. Uses the
++// application's existing logging pipeline; no new table.
++public class AuditLogBookingObserver : IBookingEventObserver
++{
++    private readonly ILogger<AuditLogBookingObserver> _logger;
++
++    public AuditLogBookingObserver(ILogger<AuditLogBookingObserver> logger)
++    {
++        _logger = logger;
++    }
++
++    public Task OnBookingEventAsync(BookingEvent e)
++    {
++        _logger.LogInformation(
++            "Booking audit: {EventKind} confirmationNo={ConfirmationNo} bookingId={BookingId} customerId={CustomerId} status={BookingStatus} estimatedAmount={EstimatedAmount}",
++            e.Kind, e.ConfirmationNo, e.BookingId, e.CustomerId, e.BookingStatus, e.EstimatedAmount);
++        return Task.CompletedTask;
++    }
++}
+diff --git a/WanderCar_DotNet/src/FlemanApi/Service/Notifications/BookingEvent.cs b/WanderCar_DotNet/src/FlemanApi/Service/Notifications/BookingEvent.cs
+new file mode 100644
+index 0000000..d1cc6ae
+--- /dev/null
++++ b/WanderCar_DotNet/src/FlemanApi/Service/Notifications/BookingEvent.cs
+@@ -0,0 +1,20 @@
++using FlemanApi.Models;
++
++namespace FlemanApi.Service.Notifications;
++
++public enum BookingEventKind { CREATED, MODIFIED, CANCELLED }
++
++// Immutable snapshot of a booking taken right after it was saved, so an
++// observer never sees (or changes) the tracked BookingHeader entity.
++public sealed record BookingEvent(
++    BookingEventKind Kind,
++    long BookingId,
++    string ConfirmationNo,
++    long CustomerId,
++    string? CustomerName,
++    string? CustomerEmail,
++    string? CarTypeName,
++    DateTime PickupDatetime,
++    DateTime ReturnDatetime,
++    double? EstimatedAmount,
++    BookingStatus? BookingStatus);
+diff --git a/WanderCar_DotNet/src/FlemanApi/Service/Notifications/BookingEventPublisher.cs b/WanderCar_DotNet/src/FlemanApi/Service/Notifications/BookingEventPublisher.cs
+new file mode 100644
+index 0000000..77a4686
+--- /dev/null
++++ b/WanderCar_DotNet/src/FlemanApi/Service/Notifications/BookingEventPublisher.cs
+@@ -0,0 +1,45 @@
++using Microsoft.Extensions.Logging;
++
++namespace FlemanApi.Service.Notifications;
++
++// ConcreteSubject. Every observer registered in DI is subscribed on
++// construction, in registration order. Observers run one after another; a
++// failing observer is logged and skipped, the same swallow-and-log rule the
++// baseline applied to the confirmation e-mail, so a notification problem
++// never fails the booking request.
++public class BookingEventPublisher : IBookingEventPublisher
++{
++    private readonly List<IBookingEventObserver> _observers = new();
++    private readonly ILogger<BookingEventPublisher> _logger;
++
++    public BookingEventPublisher(IEnumerable<IBookingEventObserver> observers, ILogger<BookingEventPublisher> logger)
++    {
++        _logger = logger;
++        foreach (var observer in observers) Subscribe(observer);
++    }
++
++    public void Subscribe(IBookingEventObserver observer)
++    {
++        if (!_observers.Contains(observer)) _observers.Add(observer);
++    }
++
++    public void Unsubscribe(IBookingEventObserver observer) => _observers.Remove(observer);
++
++    public async Task PublishAsync(BookingEvent bookingEvent)
++    {
++        // Copy, so an observer that (un)subscribes during notification
++        // cannot break the loop.
++        foreach (var observer in _observers.ToList())
++        {
++            try
++            {
++                await observer.OnBookingEventAsync(bookingEvent);
++            }
++            catch (Exception ex)
++            {
++                _logger.LogWarning(ex, "Booking observer {Observer} failed for {EventKind} {ConfirmationNo}",
++                    observer.GetType().Name, bookingEvent.Kind, bookingEvent.ConfirmationNo);
++            }
++        }
++    }
++}
+diff --git a/WanderCar_DotNet/src/FlemanApi/Service/Notifications/EmailBookingObserver.cs b/WanderCar_DotNet/src/FlemanApi/Service/Notifications/EmailBookingObserver.cs
+new file mode 100644
+index 0000000..6951d2f
+--- /dev/null
++++ b/WanderCar_DotNet/src/FlemanApi/Service/Notifications/EmailBookingObserver.cs
+@@ -0,0 +1,83 @@
++namespace FlemanApi.Service.Notifications;
++
++// ConcreteObserver: e-mails the customer through the existing IEmailService
++// (and so through the existing background queue). The CREATED text is moved
++// unchanged from the baseline BookingService.CreateBookingAsync.
++public class EmailBookingObserver : IBookingEventObserver
++{
++    public const string CreatedSubject = "Booking Confirmation - Fleeman";
++    public const string ModifiedSubject = "Booking Updated - Fleeman";
++    public const string CancelledSubject = "Booking Cancelled - Fleeman";
++
++    private readonly IEmailService _emailService;
++
++    public EmailBookingObserver(IEmailService emailService)
++    {
++        _emailService = emailService;
++    }
++
++    public async Task OnBookingEventAsync(BookingEvent e)
++    {
++        // Baseline only e-mailed when the customer row was found.
++        if (string.IsNullOrWhiteSpace(e.CustomerEmail)) return;
++
++        var (subject, body) = e.Kind switch
++        {
++            BookingEventKind.CREATED => (CreatedSubject, BuildCreatedBody(e)),
++            BookingEventKind.MODIFIED => (ModifiedSubject, BuildModifiedBody(e)),
++            BookingEventKind.CANCELLED => (CancelledSubject, BuildCancelledBody(e)),
++            _ => throw new ArgumentOutOfRangeException(nameof(e), e.Kind, "Unknown booking event kind"),
++        };
++
++        await _emailService.SendEmailAsync(e.CustomerEmail, subject, body);
++    }
++
++    public static string BuildCreatedBody(BookingEvent e) => $"""
++        Dear {e.CustomerName},
++
++        Your booking has been confirmed successfully.
++
++        Booking Details
++        -------------------------
++        Booking No : {e.ConfirmationNo}
++        Vehicle Type : {e.CarTypeName}
++        Pickup Date : {e.PickupDatetime}
++        Return Date : {e.ReturnDatetime}
++        Total Amount : ₹{e.EstimatedAmount:F2}
++
++        Thank you for choosing Fleeman.
++
++        Regards,
++        Fleeman Team
++        """;
++
++    public static string BuildModifiedBody(BookingEvent e) => $"""
++        Dear {e.CustomerName},
++
++        Your booking has been updated.
++
++        Updated Booking Details
++        -------------------------
++        Booking No : {e.ConfirmationNo}
++        Vehicle Type : {e.CarTypeName}
++        Pickup Date : {e.PickupDatetime}
++        Return Date : {e.ReturnDatetime}
++        Total Amount : ₹{e.EstimatedAmount:F2}
++
++        If you did not make this change, please contact us.
++
++        Regards,
++        Fleeman Team
++        """;
++
++    public static string BuildCancelledBody(BookingEvent e) => $"""
++        Dear {e.CustomerName},
++
++        Your booking {e.ConfirmationNo} ({e.CarTypeName}, {e.PickupDatetime} to {e.ReturnDatetime}) has been cancelled.
++
++        We hope to see you again soon.
++
++        Regards,
++        Fleeman Team
++        """;
++}
+diff --git a/WanderCar_DotNet/src/FlemanApi/Service/Notifications/IBookingEventObserver.cs b/WanderCar_DotNet/src/FlemanApi/Service/Notifications/IBookingEventObserver.cs
+new file mode 100644
+index 0000000..bfd5546
+--- /dev/null
++++ b/WanderCar_DotNet/src/FlemanApi/Service/Notifications/IBookingEventObserver.cs
+@@ -0,0 +1,9 @@
++namespace FlemanApi.Service.Notifications;
++
++// Observer: one reaction to a booking lifecycle event. New reactions are
++// added by registering another implementation in Program.cs, without
++// editing BookingService.
++public interface IBookingEventObserver
++{
++    Task OnBookingEventAsync(BookingEvent bookingEvent);
++}
+diff --git a/WanderCar_DotNet/src/FlemanApi/Service/Notifications/IBookingEventPublisher.cs b/WanderCar_DotNet/src/FlemanApi/Service/Notifications/IBookingEventPublisher.cs
+new file mode 100644
+index 0000000..143aff8
+--- /dev/null
++++ b/WanderCar_DotNet/src/FlemanApi/Service/Notifications/IBookingEventPublisher.cs
+@@ -0,0 +1,9 @@
++namespace FlemanApi.Service.Notifications;
++
++// Subject: keeps the observers and notifies them of booking events.
++public interface IBookingEventPublisher
++{
++    void Subscribe(IBookingEventObserver observer);
++    void Unsubscribe(IBookingEventObserver observer);
++    Task PublishAsync(BookingEvent bookingEvent);
++}
