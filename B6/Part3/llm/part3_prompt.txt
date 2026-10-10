@@ -1,0 +1,21 @@
+I need Part 3 (cross-language comparison) of a design-patterns case study for one pattern. Never report a test result or timing you did not actually get; if a tool is missing, stop and tell me.
+
+Pattern: Factory Method (parameterized variant). Source instance: "Vehicle Category Rules Creation" from my C# change (VehicleCategoryRulesFactory.Create returning IVehicleCategoryRules: StandardCategoryRules, ElectricCategoryRules, CommercialCategoryRules).
+
+Create Part3/FactoryMethod_VehicleCategoryRules/ with subfolders java, python, javascript, cpp. In each, write:
+1. A snippet file containing only the pattern: a VehicleCategory enumeration (STANDARD, ELECTRIC, COMMERCIAL), a rules abstraction with category(), calculateSecurityDeposit(dailyRate) and validateRates(dailyRate, weeklyRate, monthlyRate) returning a list of error strings, three concrete rules classes, and a factory with create(category). Use each language's idiomatic way to express an interface. No frameworks, no third-party libraries.
+2. A separate test runner file, no test framework, that runs exactly these 7 cases, prints one PASS/FAIL line per case and a final "PASS n/7", and exits non-zero on any failure:
+   - create(STANDARD) returns standard rules; deposit(100) = 0; validateRates(100, none, none) is empty
+   - create(ELECTRIC): deposit(60) = 120; validateRates(60, none, none) is empty
+   - create(COMMERCIAL): deposit(80) = 400
+   - COMMERCIAL validateRates(80, none, none) returns exactly one error: "weeklyRate is required for COMMERCIAL car types"
+   - COMMERCIAL validateRates(80, 500, none) is empty
+   - for every category, create(category).category() equals that category
+   - an unknown category is rejected with an error
+3. A README.md with the tool version, the exact compile and run commands, and the working folder.
+
+Also write Part3/FactoryMethod_VehicleCategoryRules/common_spec.md with the inputs, expected outputs, rules and error case above.
+
+Then actually compile and run all four and save each real output as test_result.txt in its folder. Measure for each language: source LOC of the snippet (non-blank, non-comment, excluding the test runner), maximum cyclomatic complexity of any function (count 1 + each if, loop, case, catch, && and ||, and state this rule), compiler/runtime name and version, and median elapsed time in ms of the test runner process (compile first, one warm-up, five measured runs; save the raw timings in timings.txt and say that the time includes process start-up).
+
+Finally give me four CSV rows with these columns: pattern_name, instance_name, language, snippet_path, source_loc, max_function_cc, runtime_compiler, test_command, test_result, median_process_ms, language_notes. In language_notes say how the abstraction and the factory are expressed in that language. Do not delete __pycache__, .class or binary files silently; list them so I can exclude them from the upload.

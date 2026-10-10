@@ -1,4 +1,4 @@
-# Team B8
+# Team B6
 
 - **Bhavana P H** — AM.SC.U4CSE23211
 - **Neema Vinod** — AM.SC.U4CSE23238
