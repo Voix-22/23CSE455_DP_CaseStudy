@@ -1,0 +1,19 @@
+language: java
+tool: javac 17.0.16
+command: java -cp . TestRunner
+working folder: Part3/FactoryMethod_VehicleCategoryRules/java
+method: wall-clock time of the whole test runner process, measured with
+        time.perf_counter() around subprocess.run() in measure.py.
+        Includes process start-up (JVM / interpreter / runtime load) and
+        the cost of creating the child process and capturing its output.
+        Compiled first, 1 warm-up run discarded, 5 measured runs.
+
+run 1: 137.843 ms (exit code 0)
+run 2: 109.767 ms (exit code 0)
+run 3: 106.017 ms (exit code 0)
+run 4: 108.871 ms (exit code 0)
+run 5: 138.532 ms (exit code 0)
+
+median: 109.767 ms
+min: 106.017 ms
+max: 138.532 ms
