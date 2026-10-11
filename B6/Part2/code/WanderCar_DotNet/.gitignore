@@ -1,0 +1,17 @@
+## .NET build output
+bin/
+obj/
+out/
+
+## Visual Studio / Rider
+.vs/
+*.user
+*.suo
+
+## Local-only config (contains secrets — never commit)
+appsettings.Development.json
+appsettings.Local.json
+appsettings.*.local.json
+
+## Logs
+*.log

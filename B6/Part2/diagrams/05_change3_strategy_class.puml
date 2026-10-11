@@ -1,0 +1,97 @@
+@startuml 05_change3_strategy_class
+!pragma layout smetana
+title Change3 - new pattern instance: Strategy\n"Rental Pricing Policy" (code after Change4)
+skinparam shadowing false
+skinparam classAttributeIconSize 0
+skinparam class {
+  BackgroundColor #BBDEFB
+  BorderColor Black
+}
+hide empty members
+
+class BookingService <<Context>> #FFFFFF {
+  +CreateBookingAsync(request)
+  +ModifyBookingAsync(confirmationNo, request)
+}
+note left of BookingService
+  Service/BookingService.cs:144-152, 301-311
+  booking estimate =
+  selector.SelectPolicy(...).CalculatePrice(...)
+end note
+
+class StaffService <<Context>> #FFFFFF {
+  +ProcessReturnAsync(confirmationNo, request)
+}
+note right of StaffService
+  Service/StaffService.cs:141-149
+  return invoice priced the same way
+end note
+
+interface IPricingPolicySelector {
+  +SelectPolicy(carType, pickupDate, returnDate) : IPricingPolicy
+}
+
+class PricingPolicySelector {
+  +SelectPolicy(carType, pickupDate, returnDate) : IPricingPolicy
+}
+note bottom of PricingPolicySelector
+  Util/PricingPolicySelector.cs:7-46
+  1. pickup month in PeakMonths -> seasonal
+  2. period contains Sat or Sun  -> weekend
+  3. otherwise                   -> standard
+  chooses a strategy; it is not one itself
+end note
+
+interface IPricingPolicy <<Strategy>> {
+  +Name : string
+  +CalculatePrice(carType, pickupDate, returnDate) : double
+}
+
+class StandardPricingPolicy <<ConcreteStrategy>> {
+  month / week / day packing
+}
+class WeekendPricingPolicy <<ConcreteStrategy>> {
+  standard x (1 + WeekendSurchargePercent / 100)
+}
+class SeasonalPricingPolicy <<ConcreteStrategy>> {
+  standard x (1 + SeasonalSurchargePercent / 100)
+}
+
+class PricingSettings {
+  +WeekendSurchargePercent : double = 20
+  +SeasonalSurchargePercent : double = 30
+  +PeakMonths : int[] = 12, 1, 4
+}
+
+class RentalRateCalculator <<static, original code>> #FFFFFF {
+  +CalculateRentalAmount(carType, days) : double
+}
+class RentalDurationCalculator <<static>> {
+  +DaysBetween(pickup, returnDate) : int
+}
+
+BookingService --> IPricingPolicySelector
+StaffService --> IPricingPolicySelector
+BookingService ..> IPricingPolicy : CalculatePrice
+StaffService ..> IPricingPolicy : CalculatePrice
+IPricingPolicySelector <|.. PricingPolicySelector
+PricingPolicySelector --> StandardPricingPolicy
+PricingPolicySelector --> WeekendPricingPolicy
+PricingPolicySelector --> SeasonalPricingPolicy
+PricingPolicySelector ..> PricingSettings
+IPricingPolicy <|.. StandardPricingPolicy
+IPricingPolicy <|.. WeekendPricingPolicy
+IPricingPolicy <|.. SeasonalPricingPolicy
+StandardPricingPolicy ..> RentalRateCalculator
+WeekendPricingPolicy ..> RentalRateCalculator
+SeasonalPricingPolicy ..> RentalRateCalculator
+StandardPricingPolicy ..> RentalDurationCalculator
+WeekendPricingPolicy ..> PricingSettings
+SeasonalPricingPolicy ..> PricingSettings
+
+legend bottom
+  Before Change3 both services called the static RentalRateCalculator directly.
+  Three policy classes in one collaboration count as one Strategy instance.
+  White classes existed in the original code. Binding: Program.cs:208-215.
+endlegend
+@enduml

@@ -1,0 +1,132 @@
+CH02 run-time evidence
+sdk: 8.0.425
+
+================ PHASE A: baseline dfc61ab8dd6f9bbb2301171457dc03946a249576 ================
+    0 Error(s)
+
+Time Elapsed 00:00:07.86
+
+### A1 baseline catalogue (no category field exists yet)
+GET /api/car-types
+[{"carTypeId":1,"carTypeName":"Economy","dailyRate":15,"weeklyRate":100,"monthlyRate":2000,"rateValidFrom":"2026-01-01","rateValidTo":"2026-12-31","imagePath":"/cars/economy.svg","availableCount":null},{"carTypeId":2,"carTypeName":"Compact","dailyRate":20,"weeklyRate":120,"monthlyRate":3000,"rateValidFrom":"2026-01-01","rateValidTo":"2026-12-31","imagePath":"/cars/compact.svg","availableCount":null},{"carTypeId":3,"carTypeName":"Sedan","dailyRate":30,"weeklyRate":200,"monthlyRate":5000,"rateValidFrom":"2026-01-01","rateValidTo":"2026-12-31","imagePath":"/cars/sedan.svg","availableCount":null},{"carTypeId":4,"carTypeName":"SUV","dailyRate":40,"weeklyRate":250,"monthlyRate":5000,"rateValidFrom":"2026-01-01","rateValidTo":"2026-12-31","imagePath":"/cars/suv.svg","availableCount":null},{"carTypeId":5,"carTypeName":"Luxury","dailyRate":100,"weeklyRate":500,"monthlyRate":25000,"rateValidFrom":"2026-01-01","rateValidTo":"2026-12-31","imagePath":"/cars/luxury.svg","availableCount":null},{"carTypeId":6,"carTypeName":"Minivan","dailyRate":50,"weeklyRate":300,"monthlyRate":8000,"rateValidFrom":"2026-01-01","rateValidTo":"2026-12-31","imagePath":"/cars/minivan.svg","availableCount":null}]
+HTTP 200
+
+### A2 baseline: category endpoint does not exist
+GET /api/car-types/category/ELECTRIC
+
+HTTP 404
+
+================ PHASE B: CH02 7af8d229edfaa1d5c933a0a56aa267a443bece9f ================
+    0 Error(s)
+
+Time Elapsed 00:00:03.21
+
+### B0 migration check
+Tool 'dotnet-ef' (version '8.0.2') was successfully installed.
+$ dotnet ef migrations has-pending-model-changes --no-build
+No changes have been made to the model since the last migration.
+exit code: 0
+$ dotnet ef migrations list --no-build   (before the CH02 app has started)
+ORDER BY `MigrationId`;
+20260805125451_InitialCreate
+20261008070000_AddVehicleCategory (Pending)
+
+### B1 existing (seeded at baseline) car types after upgrade
+GET /api/car-types
+[{"carTypeId":1,"carTypeName":"Economy","dailyRate":15,"weeklyRate":100,"monthlyRate":2000,"rateValidFrom":"2026-01-01","rateValidTo":"2026-12-31","imagePath":"/cars/economy.svg","category":"STANDARD","securityDeposit":0,"availableCount":null},{"carTypeId":2,"carTypeName":"Compact","dailyRate":20,"weeklyRate":120,"monthlyRate":3000,"rateValidFrom":"2026-01-01","rateValidTo":"2026-12-31","imagePath":"/cars/compact.svg","category":"STANDARD","securityDeposit":0,"availableCount":null},{"carTypeId":3,"carTypeName":"Sedan","dailyRate":30,"weeklyRate":200,"monthlyRate":5000,"rateValidFrom":"2026-01-01","rateValidTo":"2026-12-31","imagePath":"/cars/sedan.svg","category":"STANDARD","securityDeposit":0,"availableCount":null},{"carTypeId":4,"carTypeName":"SUV","dailyRate":40,"weeklyRate":250,"monthlyRate":5000,"rateValidFrom":"2026-01-01","rateValidTo":"2026-12-31","imagePath":"/cars/suv.svg","category":"STANDARD","securityDeposit":0,"availableCount":null},{"carTypeId":5,"carTypeName":"Luxury","dailyRate":100,"weeklyRate":500,"monthlyRate":25000,"rateValidFrom":"2026-01-01","rateValidTo":"2026-12-31","imagePath":"/cars/luxury.svg","category":"STANDARD","securityDeposit":0,"availableCount":null},{"carTypeId":6,"carTypeName":"Minivan","dailyRate":50,"weeklyRate":300,"monthlyRate":8000,"rateValidFrom":"2026-01-01","rateValidTo":"2026-12-31","imagePath":"/cars/minivan.svg","category":"STANDARD","securityDeposit":0,"availableCount":null}]
+HTTP 200
+
+### B2 staff login -> token of 196 characters obtained
+### B2b customer login -> token of 215 characters obtained
+
+### B3 create ELECTRIC (expect 200, securityDeposit 120)
+POST /api/staff/car-types   [Authorization: Bearer <token>]
+body: {"carTypeName":"City EV","category":"ELECTRIC","dailyRate":60}
+{"carTypeId":7,"carTypeName":"City EV","dailyRate":60,"weeklyRate":null,"monthlyRate":null,"rateValidFrom":null,"rateValidTo":null,"imagePath":null,"category":"ELECTRIC","securityDeposit":120,"availableCount":null}
+HTTP 200
+
+### B4 create COMMERCIAL without weeklyRate (expect 400)
+POST /api/staff/car-types   [Authorization: Bearer <token>]
+body: {"carTypeName":"Cargo Van","category":"COMMERCIAL","dailyRate":80}
+{"message":"weeklyRate is required for COMMERCIAL car types","status":400,"timestamp":"2026-10-10T14:46:51.3676561+00:00"}
+HTTP 400
+
+### B5 create COMMERCIAL with weeklyRate (expect 200, securityDeposit 400)
+POST /api/staff/car-types   [Authorization: Bearer <token>]
+body: {"carTypeName":"Cargo Van","category":"COMMERCIAL","dailyRate":80,"weeklyRate":500}
+{"carTypeId":8,"carTypeName":"Cargo Van","dailyRate":80,"weeklyRate":500,"monthlyRate":null,"rateValidFrom":null,"rateValidTo":null,"imagePath":null,"category":"COMMERCIAL","securityDeposit":400,"availableCount":null}
+HTTP 200
+
+### B6 create STANDARD (expect 200, securityDeposit 0)
+POST /api/staff/car-types   [Authorization: Bearer <token>]
+body: {"carTypeName":"Hatchback","category":"STANDARD","dailyRate":18}
+{"carTypeId":9,"carTypeName":"Hatchback","dailyRate":18,"weeklyRate":null,"monthlyRate":null,"rateValidFrom":null,"rateValidTo":null,"imagePath":null,"category":"STANDARD","securityDeposit":0,"availableCount":null}
+HTTP 200
+
+### B7 duplicate name, different case and spaces (expect 409)
+POST /api/staff/car-types   [Authorization: Bearer <token>]
+body: {"carTypeName":"  city ev ","category":"ELECTRIC","dailyRate":70}
+{"message":"A car type with this name already exists: city ev","status":409,"timestamp":"2026-10-10T14:46:51.7270105+00:00"}
+HTTP 409
+
+### B8 no token (expect 401)
+POST /api/staff/car-types
+body: {"carTypeName":"Ghost","category":"ELECTRIC","dailyRate":60}
+
+HTTP 401
+
+### B9 customer token, not STAFF (expect 403)
+POST /api/staff/car-types   [Authorization: Bearer <token>]
+body: {"carTypeName":"Ghost","category":"ELECTRIC","dailyRate":60}
+
+HTTP 403
+
+### B10 validator: empty name, no category, dailyRate 0 (expect 400)
+POST /api/staff/car-types   [Authorization: Bearer <token>]
+body: {"carTypeName":"","dailyRate":0}
+{"message":"Category: category is required, DailyRate: dailyRate must be greater than 0, CarTypeName: carTypeName is required","status":400,"timestamp":"2026-10-10T14:46:52.0108852+00:00"}
+HTTP 400
+
+### B11 unknown category name in body (expect 400)
+POST /api/staff/car-types   [Authorization: Bearer <token>]
+body: {"carTypeName":"Hover","category":"HOVERCRAFT","dailyRate":60}
+{"message":"request: The request field is required., $.category: The JSON value could not be converted to System.Nullable`1[FlemanApi.Models.VehicleCategory]. Path: $.category | LineNumber: 0 | BytePositionInLine: 46.","status":400,"timestamp":"2026-10-10T14:46:52.1091483+00:00"}
+HTTP 400
+
+### B12 list ELECTRIC
+GET /api/car-types/category/ELECTRIC
+[{"carTypeId":7,"carTypeName":"City EV","dailyRate":60,"weeklyRate":null,"monthlyRate":null,"rateValidFrom":null,"rateValidTo":null,"imagePath":null,"category":"ELECTRIC","securityDeposit":120,"availableCount":null}]
+HTTP 200
+
+### B13 list COMMERCIAL
+GET /api/car-types/category/COMMERCIAL
+[{"carTypeId":8,"carTypeName":"Cargo Van","dailyRate":80,"weeklyRate":500,"monthlyRate":null,"rateValidFrom":null,"rateValidTo":null,"imagePath":null,"category":"COMMERCIAL","securityDeposit":400,"availableCount":null}]
+HTTP 200
+
+### B14 list STANDARD
+GET /api/car-types/category/STANDARD
+[{"carTypeId":1,"carTypeName":"Economy","dailyRate":15,"weeklyRate":100,"monthlyRate":2000,"rateValidFrom":"2026-01-01","rateValidTo":"2026-12-31","imagePath":"/cars/economy.svg","category":"STANDARD","securityDeposit":0,"availableCount":null},{"carTypeId":2,"carTypeName":"Compact","dailyRate":20,"weeklyRate":120,"monthlyRate":3000,"rateValidFrom":"2026-01-01","rateValidTo":"2026-12-31","imagePath":"/cars/compact.svg","category":"STANDARD","securityDeposit":0,"availableCount":null},{"carTypeId":3,"carTypeName":"Sedan","dailyRate":30,"weeklyRate":200,"monthlyRate":5000,"rateValidFrom":"2026-01-01","rateValidTo":"2026-12-31","imagePath":"/cars/sedan.svg","category":"STANDARD","securityDeposit":0,"availableCount":null},{"carTypeId":4,"carTypeName":"SUV","dailyRate":40,"weeklyRate":250,"monthlyRate":5000,"rateValidFrom":"2026-01-01","rateValidTo":"2026-12-31","imagePath":"/cars/suv.svg","category":"STANDARD","securityDeposit":0,"availableCount":null},{"carTypeId":5,"carTypeName":"Luxury","dailyRate":100,"weeklyRate":500,"monthlyRate":25000,"rateValidFrom":"2026-01-01","rateValidTo":"2026-12-31","imagePath":"/cars/luxury.svg","category":"STANDARD","securityDeposit":0,"availableCount":null},{"carTypeId":6,"carTypeName":"Minivan","dailyRate":50,"weeklyRate":300,"monthlyRate":8000,"rateValidFrom":"2026-01-01","rateValidTo":"2026-12-31","imagePath":"/cars/minivan.svg","category":"STANDARD","securityDeposit":0,"availableCount":null},{"carTypeId":9,"carTypeName":"Hatchback","dailyRate":18,"weeklyRate":null,"monthlyRate":null,"rateValidFrom":null,"rateValidTo":null,"imagePath":null,"category":"STANDARD","securityDeposit":0,"availableCount":null}]
+HTTP 200
+
+### B15 unknown category in route (expect 400)
+GET /api/car-types/category/HOVERCRAFT
+{"message":"category: The value 'HOVERCRAFT' is not valid.","status":400,"timestamp":"2026-10-10T14:46:52.4479129+00:00"}
+HTTP 400
+
+### B16 numeric out-of-range category in route
+GET /api/car-types/category/999
+{"message":"category: The value '999' is invalid.","status":400,"timestamp":"2026-10-10T14:46:52.5258642+00:00"}
+HTTP 400
+
+### B17 numeric category in body
+POST /api/staff/car-types   [Authorization: Bearer <token>]
+body: {"carTypeName":"Numeric","category":7,"dailyRate":60}
+{"message":"Category: category must be STANDARD, ELECTRIC or COMMERCIAL","status":400,"timestamp":"2026-10-10T14:46:52.6227659+00:00"}
+HTTP 400
+
+### B18 existing endpoint still works: available cars
+GET /api/cars/available?hubId=1
+[body shortened for this file: JSON array of 60 cars; the nested carType of all 60 reports "category":"STANDARD","securityDeposit":0]
+HTTP 200
+
+done

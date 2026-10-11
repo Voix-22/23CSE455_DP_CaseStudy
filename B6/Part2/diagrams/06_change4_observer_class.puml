@@ -1,0 +1,98 @@
+@startuml 06_change4_observer_class
+!pragma layout smetana
+title Change4 - new pattern instance: Observer\n"Booking Lifecycle Notification" (code after Change4)
+skinparam shadowing false
+skinparam classAttributeIconSize 0
+skinparam class {
+  BackgroundColor #E1BEE7
+  BorderColor Black
+}
+hide empty members
+
+class BookingService <<Client>> #FFFFFF {
+  +CreateBookingAsync(request)
+  +ModifyBookingAsync(confirmationNo, request)
+  +CancelBookingAsync(confirmationNo)
+  -PublishBookingEventAsync(kind, header)
+}
+note left of BookingService
+  Service/BookingService.cs:362-385
+  called after each successful save:
+  line 180 CREATED, 316 MODIFIED, 340 CANCELLED
+  names no reaction
+end note
+
+interface IBookingEventPublisher <<Subject>> {
+  +Subscribe(observer : IBookingEventObserver)
+  +Unsubscribe(observer : IBookingEventObserver)
+  +PublishAsync(bookingEvent : BookingEvent) : Task
+}
+
+class BookingEventPublisher <<ConcreteSubject>> {
+  -_observers : List<IBookingEventObserver>
+  +Subscribe(observer)
+  +Unsubscribe(observer)
+  +PublishAsync(bookingEvent) : Task
+}
+note right of BookingEventPublisher
+  Service/Notifications/BookingEventPublisher.cs:10-45
+  constructor subscribes every observer
+  injected by DI, in registration order;
+  PublishAsync notifies each one and
+  logs and skips an observer that throws
+end note
+
+interface IBookingEventObserver <<Observer>> {
+  +OnBookingEventAsync(bookingEvent : BookingEvent) : Task
+}
+
+class EmailBookingObserver <<ConcreteObserver>> {
+  +OnBookingEventAsync(e) : Task
+  +BuildCreatedBody(e) : string
+  +BuildModifiedBody(e) : string
+  +BuildCancelledBody(e) : string
+}
+class AuditLogBookingObserver <<ConcreteObserver>> {
+  +OnBookingEventAsync(e) : Task
+}
+
+class BookingEvent <<record>> {
+  +Kind : BookingEventKind
+  +BookingId : long
+  +ConfirmationNo : string
+  +CustomerName : string?
+  +CustomerEmail : string?
+  +CarTypeName : string?
+  +PickupDatetime : DateTime
+  +ReturnDatetime : DateTime
+  +EstimatedAmount : double?
+}
+enum BookingEventKind {
+  CREATED
+  MODIFIED
+  CANCELLED
+}
+
+interface IEmailService <<original code>> #FFFFFF {
+  +SendEmailAsync(to, subject, body) : Task
+}
+interface "ILogger<AuditLogBookingObserver>" as ILogger <<framework>> #FFFFFF
+
+BookingService --> IBookingEventPublisher : PublishAsync
+BookingService ..> BookingEvent : <<create>>
+IBookingEventPublisher <|.. BookingEventPublisher
+BookingEventPublisher o--> "0..*" IBookingEventObserver : notifies
+IBookingEventObserver <|.. EmailBookingObserver
+IBookingEventObserver <|.. AuditLogBookingObserver
+IBookingEventObserver ..> BookingEvent
+BookingEvent --> BookingEventKind
+EmailBookingObserver --> IEmailService
+AuditLogBookingObserver --> ILogger
+
+legend bottom
+  Push model: the event carries everything the observers need.
+  The subject is a separate publisher object, not the booking entity.
+  Wiring: Program.cs:233-238 (e-mail observer first, then audit).
+  White types existed before Change4.
+endlegend
+@enduml

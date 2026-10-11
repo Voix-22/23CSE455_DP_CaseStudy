@@ -1,0 +1,79 @@
+@startuml 04_change2_factory_method_class
+!pragma layout smetana
+title Change2 - new pattern instance: Factory Method (parameterized)\n"Vehicle Category Rules Creation" (code after Change4)
+skinparam shadowing false
+skinparam classAttributeIconSize 0
+skinparam class {
+  BackgroundColor #C8E6C9
+  BorderColor Black
+}
+hide empty members
+
+class CarTypeService <<Client>> {
+  +CreateCarTypeAsync(request : CreateCarTypeRequest) : CarTypeDTO
+}
+note left of CarTypeService
+  Service/CarTypeService.cs:27-59
+  calls Create at line 36;
+  never names a concrete rules class
+end note
+
+interface IVehicleCategoryRulesFactory <<Creator>> {
+  +Create(category : VehicleCategory) : IVehicleCategoryRules
+}
+
+class VehicleCategoryRulesFactory <<ConcreteCreator>> {
+  +Create(category : VehicleCategory) : IVehicleCategoryRules
+}
+note right of VehicleCategoryRulesFactory
+  Service/Categories/VehicleCategoryRulesFactory.cs:15-24
+  factory method: switch on category
+    STANDARD   -> new StandardCategoryRules()
+    ELECTRIC   -> new ElectricCategoryRules()
+    COMMERCIAL -> new CommercialCategoryRules()
+    otherwise  -> throw ApiException (400)
+end note
+
+interface IVehicleCategoryRules <<Product>> {
+  +Category : VehicleCategory
+  +CalculateSecurityDeposit(dailyRate : double) : double
+  +ValidateRates(dailyRate, weeklyRate, monthlyRate) : IReadOnlyList<string>
+}
+
+class StandardCategoryRules <<ConcreteProduct>> {
+  deposit = 0
+  no rate rule
+}
+class ElectricCategoryRules <<ConcreteProduct>> {
+  deposit = dailyRate x 2
+  no rate rule
+}
+class CommercialCategoryRules <<ConcreteProduct>> {
+  deposit = dailyRate x 5
+  weeklyRate is required
+}
+
+enum VehicleCategory {
+  STANDARD
+  ELECTRIC
+  COMMERCIAL
+}
+
+CarTypeService --> IVehicleCategoryRulesFactory : asks for rules
+CarTypeService ..> IVehicleCategoryRules : uses only the interface
+IVehicleCategoryRulesFactory <|.. VehicleCategoryRulesFactory
+IVehicleCategoryRules <|.. StandardCategoryRules
+IVehicleCategoryRules <|.. ElectricCategoryRules
+IVehicleCategoryRules <|.. CommercialCategoryRules
+VehicleCategoryRulesFactory ..> StandardCategoryRules : <<create>>
+VehicleCategoryRulesFactory ..> ElectricCategoryRules : <<create>>
+VehicleCategoryRulesFactory ..> CommercialCategoryRules : <<create>>
+VehicleCategoryRulesFactory ..> VehicleCategory : parameter
+
+legend bottom
+  Parameterized variant: one concrete creator whose factory method takes a
+  parameter identifying the product. There is no creator class hierarchy,
+  so some texts call this structure Simple Factory.
+  Binding: Program.cs:193-194 registers the factory as a singleton.
+endlegend
+@enduml

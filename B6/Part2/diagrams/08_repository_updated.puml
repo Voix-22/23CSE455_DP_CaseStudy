@@ -1,0 +1,42 @@
+@startuml 08_repository_updated
+!pragma layout smetana
+title Generic Repository - updated (code after Change4)\nextended by Change1 and Change2
+skinparam shadowing false
+skinparam classAttributeIconSize 0
+skinparam class {
+  BackgroundColor White
+  BorderColor Black
+}
+hide empty members
+
+interface "IGenericRepository<TEntity,TKey>" as IRepo
+class "GenericRepository<TEntity,TKey>" as Repo
+class FlemanDbContext {
+  +Cars : DbSet<Car>
+  +CarTypes : DbSet<CarType>
+  +BookingHeaders : DbSet<BookingHeader>
+  +MaintenanceSchedules : DbSet<MaintenanceSchedule>
+}
+class VehicleService
+class BookingService
+class StaffService
+class MaintenanceService #FFE0B2
+class CarTypeService #C8E6C9
+class MaintenanceSchedule <<entity>> #FFE0B2
+
+IRepo <|.. Repo
+Repo --> FlemanDbContext
+VehicleService --> IRepo
+BookingService --> IRepo
+StaffService --> IRepo
+MaintenanceService --> IRepo : MaintenanceSchedule, Car
+CarTypeService --> IRepo : CarType
+FlemanDbContext ..> MaintenanceSchedule
+
+legend bottom
+  Orange: added by Change1 (new entity and new client).
+  Green: added by Change2 (new client).
+  IGenericRepository and GenericRepository are not edited:
+  the open-generic registration (Program.cs:182) already covers new entities.
+endlegend
+@enduml

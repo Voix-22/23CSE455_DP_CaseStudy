@@ -1,0 +1,99 @@
+@startuml 01_architecture_after_changes
+!pragma layout smetana
+title Evolved architecture (code after Change4)\nwhite = original code, coloured = added by a change
+skinparam shadowing false
+skinparam classAttributeIconSize 0
+skinparam class {
+  BackgroundColor White
+  BorderColor Black
+}
+hide empty members
+
+package "Controllers" {
+  class BookingController
+  class StaffController
+  class VehicleController
+  class MaintenanceController #FFE0B2
+  class CarTypeController #C8E6C9
+}
+
+package "Service" {
+  class BookingService
+  class StaffService
+  class VehicleService
+  class EmailService
+  class MaintenanceService #FFE0B2
+  class CarTypeService #C8E6C9
+}
+
+package "Service/Maintenance (Change1: State)" #FFF3E0 {
+  class MaintenanceContext #FFE0B2
+  interface IMaintenanceState #FFE0B2
+}
+
+package "Service/Categories (Change2: Factory Method)" #E8F5E9 {
+  interface IVehicleCategoryRulesFactory #C8E6C9
+  interface IVehicleCategoryRules #C8E6C9
+}
+
+package "Util (Change3: Strategy)" #E3F2FD {
+  interface IPricingPolicySelector #BBDEFB
+  interface IPricingPolicy #BBDEFB
+  class RentalRateCalculator
+}
+
+package "Service/Notifications (Change4: Observer)" #F3E5F5 {
+  interface IBookingEventPublisher #E1BEE7
+  interface IBookingEventObserver #E1BEE7
+  class EmailBookingObserver #E1BEE7
+  class AuditLogBookingObserver #E1BEE7
+}
+
+package "Repository / Data" {
+  interface "IGenericRepository<TEntity,TKey>" as IRepo
+  interface IAvailabilityRepository
+  class FlemanDbContext
+}
+
+BookingController --> BookingService
+StaffController --> StaffService
+VehicleController --> VehicleService
+MaintenanceController --> MaintenanceService
+CarTypeController --> CarTypeService
+
+BookingService --> IRepo
+StaffService --> IRepo
+VehicleService --> IRepo
+MaintenanceService --> IRepo
+CarTypeService --> IRepo
+BookingService --> IAvailabilityRepository
+StaffService --> IAvailabilityRepository
+IRepo ..> FlemanDbContext
+
+MaintenanceService --> MaintenanceContext : builds
+MaintenanceContext --> IMaintenanceState : delegates
+
+CarTypeService --> IVehicleCategoryRulesFactory : Create(category)
+IVehicleCategoryRulesFactory ..> IVehicleCategoryRules : <<create>>
+
+BookingService --> IPricingPolicySelector : booking estimate
+StaffService --> IPricingPolicySelector : return invoice
+IPricingPolicySelector ..> IPricingPolicy : selects
+IPricingPolicy ..> RentalRateCalculator : reuses
+
+BookingService --> IBookingEventPublisher : PublishAsync(event)
+IBookingEventPublisher --> IBookingEventObserver : notifies
+IBookingEventObserver <|.. EmailBookingObserver
+IBookingEventObserver <|.. AuditLogBookingObserver
+EmailBookingObserver --> EmailService : SendEmailAsync
+StaffService --> EmailService : return invoice e-mail
+
+legend bottom
+  Orange: Change1 fleet-maintenance scheduling (State)
+  Green: Change2 vehicle categories (Factory Method)
+  Blue: Change3 rental pricing policies (Strategy)
+  Purple: Change4 booking lifecycle notifications (Observer)
+  Changed original classes: BookingService (Change3, Change4), StaffService (Change3).
+  Before Change4, BookingService called EmailService directly.
+endlegend
+@enduml

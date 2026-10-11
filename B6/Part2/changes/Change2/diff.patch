@@ -1,0 +1,1381 @@
+diff --git a/WanderCar_DotNet/src/FlemanApi.Tests/Services/CarTypeServiceTests.cs b/WanderCar_DotNet/src/FlemanApi.Tests/Services/CarTypeServiceTests.cs
+new file mode 100644
+index 0000000..dfb5e1a
+--- /dev/null
++++ b/WanderCar_DotNet/src/FlemanApi.Tests/Services/CarTypeServiceTests.cs
+@@ -0,0 +1,112 @@
++using System.Net;
++using FlemanApi.DTO;
++using FlemanApi.Exceptions;
++using FlemanApi.Models;
++using FlemanApi.Service;
++using FlemanApi.Service.Categories;
++using FlemanApi.Tests.TestHelpers;
++using FluentAssertions;
++
++namespace FlemanApi.Tests.Services;
++
++[TestFixture]
++public class CarTypeServiceTests
++{
++    private List<CarType> _carTypes = null!;
++    private CarTypeService _service = null!;
++
++    [SetUp]
++    public void SetUp()
++    {
++        _carTypes = new List<CarType>
++        {
++            new() { CarTypeId = 1, CarTypeName = "Sedan", DailyRate = 30.0 },
++            new() { CarTypeId = 2, CarTypeName = "City EV", DailyRate = 60.0, Category = VehicleCategory.ELECTRIC, SecurityDeposit = 120.0 },
++        };
++        var repo = MockRepositoryFactory.Create<CarType, long>(_carTypes, ct => ct.CarTypeId, (ct, id) => ct.CarTypeId = id);
++        _service = new CarTypeService(repo.Object, new VehicleCategoryRulesFactory(), TestMapperFactory.Create());
++    }
++
++    [Test]
++    public async Task CreateCarTypeAsync_Electric_StoresCategoryAndDeposit()
++    {
++        var dto = await _service.CreateCarTypeAsync(new CreateCarTypeRequest
++        {
++            CarTypeName = "Premium EV", Category = VehicleCategory.ELECTRIC, DailyRate = 90.0,
++        });
++
++        dto.Category.Should().Be("ELECTRIC");
++        dto.SecurityDeposit.Should().Be(180.0);
++        dto.CarTypeId.Should().Be(3);
++        _carTypes.Should().HaveCount(3);
++    }
++
++    [Test]
++    public async Task CreateCarTypeAsync_Commercial_WithWeeklyRate_Succeeds()
++    {
++        var dto = await _service.CreateCarTypeAsync(new CreateCarTypeRequest
++        {
++            CarTypeName = "Cargo Van", Category = VehicleCategory.COMMERCIAL, DailyRate = 80.0, WeeklyRate = 500.0,
++        });
++
++        dto.Category.Should().Be("COMMERCIAL");
++        dto.SecurityDeposit.Should().Be(400.0);
++    }
++
++    [Test]
++    public async Task CreateCarTypeAsync_Commercial_WithoutWeeklyRate_ThrowsBadRequest()
++    {
++        var act = () => _service.CreateCarTypeAsync(new CreateCarTypeRequest
++        {
++            CarTypeName = "Cargo Van", Category = VehicleCategory.COMMERCIAL, DailyRate = 80.0,
++        });
++
++        (await act.Should().ThrowAsync<ApiException>()).Which.Status.Should().Be(HttpStatusCode.BadRequest);
++        _carTypes.Should().HaveCount(2);
++    }
++
++    [Test]
++    public async Task CreateCarTypeAsync_DuplicateName_IgnoringCaseAndSpaces_ThrowsConflict()
++    {
++        var act = () => _service.CreateCarTypeAsync(new CreateCarTypeRequest
++        {
++            CarTypeName = "  sedan ", Category = VehicleCategory.STANDARD, DailyRate = 30.0,
++        });
++
++        (await act.Should().ThrowAsync<ApiException>()).Which.Status.Should().Be(HttpStatusCode.Conflict);
++        _carTypes.Should().HaveCount(2);
++    }
++
++    [Test]
++    public async Task CreateCarTypeAsync_Standard_HasZeroDeposit()
++    {
++        var dto = await _service.CreateCarTypeAsync(new CreateCarTypeRequest
++        {
++            CarTypeName = "Hatchback", Category = VehicleCategory.STANDARD, DailyRate = 18.0,
++        });
++
++        dto.Category.Should().Be("STANDARD");
++        dto.SecurityDeposit.Should().Be(0.0);
++    }
++
++    [Test]
++    public async Task GetCarTypesByCategoryAsync_ReturnsOnlyThatCategory()
++    {
++        var electric = await _service.GetCarTypesByCategoryAsync(VehicleCategory.ELECTRIC);
++        var standard = await _service.GetCarTypesByCategoryAsync(VehicleCategory.STANDARD);
++        var commercial = await _service.GetCarTypesByCategoryAsync(VehicleCategory.COMMERCIAL);
++
++        electric.Should().ContainSingle().Which.CarTypeName.Should().Be("City EV");
++        standard.Should().ContainSingle().Which.CarTypeName.Should().Be("Sedan");
++        commercial.Should().BeEmpty();
++    }
++
++    [Test]
++    public void Mapping_CarTypeWithoutExplicitCategory_IsReportedAsStandard()
++    {
++        var dto = TestMapperFactory.Create().Map<CarTypeDTO>(new CarType { CarTypeId = 9, CarTypeName = "SUV", DailyRate = 40.0 });
++
++        dto.Category.Should().Be("STANDARD");
++        dto.SecurityDeposit.Should().Be(0.0);
++    }
++}
+diff --git a/WanderCar_DotNet/src/FlemanApi.Tests/Services/VehicleCategoryRulesTests.cs b/WanderCar_DotNet/src/FlemanApi.Tests/Services/VehicleCategoryRulesTests.cs
+new file mode 100644
+index 0000000..23319e6
+--- /dev/null
++++ b/WanderCar_DotNet/src/FlemanApi.Tests/Services/VehicleCategoryRulesTests.cs
+@@ -0,0 +1,70 @@
++using FlemanApi.Exceptions;
++using FlemanApi.Models;
++using FlemanApi.Service.Categories;
++using FluentAssertions;
++
++namespace FlemanApi.Tests.Services;
++
++[TestFixture]
++public class VehicleCategoryRulesTests
++{
++    private readonly VehicleCategoryRulesFactory _factory = new();
++
++    [Test]
++    public void Create_ReturnsMatchingRulesForEachCategory()
++    {
++        _factory.Create(VehicleCategory.STANDARD).Should().BeOfType<StandardCategoryRules>();
++        _factory.Create(VehicleCategory.ELECTRIC).Should().BeOfType<ElectricCategoryRules>();
++        _factory.Create(VehicleCategory.COMMERCIAL).Should().BeOfType<CommercialCategoryRules>();
++    }
++
++    [Test]
++    public void Create_EveryEnumValueIsSupportedAndReportsItsOwnCategory()
++    {
++        foreach (var category in Enum.GetValues<VehicleCategory>())
++        {
++            _factory.Create(category).Category.Should().Be(category);
++        }
++    }
++
++    [Test]
++    public void Create_UnknownCategory_ThrowsApiException()
++    {
++        var act = () => _factory.Create((VehicleCategory)999);
++
++        act.Should().Throw<ApiException>();
++    }
++
++    [Test]
++    public void Standard_HasNoDepositAndNoRateRule()
++    {
++        var rules = new StandardCategoryRules();
++
++        rules.CalculateSecurityDeposit(100.0).Should().Be(0.0);
++        rules.ValidateRates(100.0, null, null).Should().BeEmpty();
++    }
++
++    [Test]
++    public void Electric_DepositIsTwiceTheDailyRate()
++    {
++        var rules = new ElectricCategoryRules();
++
++        rules.CalculateSecurityDeposit(60.0).Should().Be(120.0);
++        rules.ValidateRates(60.0, null, null).Should().BeEmpty();
++    }
++
++    [Test]
++    public void Commercial_DepositIsFiveTimesTheDailyRate()
++    {
++        new CommercialCategoryRules().CalculateSecurityDeposit(80.0).Should().Be(400.0);
++    }
++
++    [Test]
++    public void Commercial_RequiresWeeklyRate()
++    {
++        var rules = new CommercialCategoryRules();
++
++        rules.ValidateRates(80.0, null, null).Should().ContainSingle();
++        rules.ValidateRates(80.0, 500.0, null).Should().BeEmpty();
++    }
++}
+diff --git a/WanderCar_DotNet/src/FlemanApi.Tests/Validators/CreateCarTypeRequestValidatorTests.cs b/WanderCar_DotNet/src/FlemanApi.Tests/Validators/CreateCarTypeRequestValidatorTests.cs
+new file mode 100644
+index 0000000..7d8312e
+--- /dev/null
++++ b/WanderCar_DotNet/src/FlemanApi.Tests/Validators/CreateCarTypeRequestValidatorTests.cs
+@@ -0,0 +1,127 @@
++using FlemanApi.DTO;
++using FlemanApi.Models;
++using FlemanApi.Validators;
++using FluentValidation.TestHelper;
++
++namespace FlemanApi.Tests.Validators;
++
++[TestFixture]
++public class CreateCarTypeRequestValidatorTests
++{
++    private readonly CreateCarTypeRequestValidator _validator = new();
++
++    private static CreateCarTypeRequest MakeValidRequest() => new()
++    {
++        CarTypeName = "City EV",
++        Category = VehicleCategory.ELECTRIC,
++        DailyRate = 60.0,
++        WeeklyRate = 350.0,
++        MonthlyRate = 1200.0,
++    };
++
++    [Test]
++    public void Validate_ValidRequest_Passes()
++    {
++        var result = _validator.TestValidate(MakeValidRequest());
++
++        result.ShouldNotHaveAnyValidationErrors();
++    }
++
++    [Test]
++    public void Validate_OnlyRequiredFields_Passes()
++    {
++        var request = new CreateCarTypeRequest { CarTypeName = "Hatchback", Category = VehicleCategory.STANDARD, DailyRate = 18.0 };
++
++        var result = _validator.TestValidate(request);
++
++        result.ShouldNotHaveAnyValidationErrors();
++    }
++
++    [Test]
++    public void Validate_EmptyCarTypeName_HasError()
++    {
++        var request = MakeValidRequest();
++        request.CarTypeName = "";
++
++        var result = _validator.TestValidate(request);
++
++        result.ShouldHaveValidationErrorFor(x => x.CarTypeName).WithErrorMessage("carTypeName is required");
++    }
++
++    [Test]
++    public void Validate_CarTypeNameTooLong_HasError()
++    {
++        var request = MakeValidRequest();
++        request.CarTypeName = new string('x', 101);
++
++        var result = _validator.TestValidate(request);
++
++        result.ShouldHaveValidationErrorFor(x => x.CarTypeName).WithErrorMessage("carTypeName must be at most 100 characters");
++    }
++
++    [Test]
++    public void Validate_NullCategory_HasError()
++    {
++        var request = MakeValidRequest();
++        request.Category = null;
++
++        var result = _validator.TestValidate(request);
++
++        result.ShouldHaveValidationErrorFor(x => x.Category).WithErrorMessage("category is required");
++    }
++
++    [Test]
++    public void Validate_CategoryOutsideEnum_HasError()
++    {
++        var request = MakeValidRequest();
++        request.Category = (VehicleCategory)999;
++
++        var result = _validator.TestValidate(request);
++
++        result.ShouldHaveValidationErrorFor(x => x.Category);
++    }
++
++    [Test]
++    public void Validate_NullDailyRate_HasError()
++    {
++        var request = MakeValidRequest();
++        request.DailyRate = null;
++
++        var result = _validator.TestValidate(request);
++
++        result.ShouldHaveValidationErrorFor(x => x.DailyRate).WithErrorMessage("dailyRate is required");
++    }
++
++    [Test]
++    public void Validate_ZeroDailyRate_HasError()
++    {
++        var request = MakeValidRequest();
++        request.DailyRate = 0.0;
++
++        var result = _validator.TestValidate(request);
++
++        result.ShouldHaveValidationErrorFor(x => x.DailyRate).WithErrorMessage("dailyRate must be greater than 0");
++    }
++
++    [Test]
++    public void Validate_NegativeWeeklyRate_HasError()
++    {
++        var request = MakeValidRequest();
++        request.WeeklyRate = -1.0;
++
++        var result = _validator.TestValidate(request);
++
++        result.ShouldHaveValidationErrorFor(x => x.WeeklyRate).WithErrorMessage("weeklyRate must be greater than 0");
++    }
++
++    [Test]
++    public void Validate_NegativeMonthlyRate_HasError()
++    {
++        var request = MakeValidRequest();
++        request.MonthlyRate = -1.0;
++
++        var result = _validator.TestValidate(request);
++
++        result.ShouldHaveValidationErrorFor(x => x.MonthlyRate).WithErrorMessage("monthlyRate must be greater than 0");
++    }
++}
+diff --git a/WanderCar_DotNet/src/FlemanApi/Controllers/CarTypeController.cs b/WanderCar_DotNet/src/FlemanApi/Controllers/CarTypeController.cs
+new file mode 100644
+index 0000000..937dbdf
+--- /dev/null
++++ b/WanderCar_DotNet/src/FlemanApi/Controllers/CarTypeController.cs
+@@ -0,0 +1,31 @@
++using FlemanApi.DTO;
++using FlemanApi.Models;
++using FlemanApi.Service;
++using Microsoft.AspNetCore.Authorization;
++using Microsoft.AspNetCore.Mvc;
++
++namespace FlemanApi.Controllers;
++
++// CH02 - a separate controller on purpose: VehicleController carries a
++// class-level [AllowAnonymous], which would override [Authorize] on any
++// action added to it, so the staff-only create endpoint cannot live there.
++[ApiController]
++public class CarTypeController : ControllerBase
++{
++    private readonly ICarTypeService _carTypeService;
++
++    public CarTypeController(ICarTypeService carTypeService)
++    {
++        _carTypeService = carTypeService;
++    }
++
++    [HttpGet("api/car-types/category/{category}")]
++    [AllowAnonymous]
++    public async Task<IActionResult> GetByCategory(VehicleCategory category) =>
++        Ok(await _carTypeService.GetCarTypesByCategoryAsync(category));
++
++    [HttpPost("api/staff/car-types")]
++    [Authorize(Roles = "STAFF")]
++    public async Task<IActionResult> CreateCarType([FromBody] CreateCarTypeRequest request) =>
++        Ok(await _carTypeService.CreateCarTypeAsync(request));
++}
+diff --git a/WanderCar_DotNet/src/FlemanApi/DTO/CarTypeDTO.cs b/WanderCar_DotNet/src/FlemanApi/DTO/CarTypeDTO.cs
+index 5b78b2b..b67097b 100644
+--- a/WanderCar_DotNet/src/FlemanApi/DTO/CarTypeDTO.cs
++++ b/WanderCar_DotNet/src/FlemanApi/DTO/CarTypeDTO.cs
+@@ -11,6 +11,11 @@ public class CarTypeDTO
+     public DateOnly? RateValidTo { get; set; }
+     public string? ImagePath { get; set; }
+ 
++    // CH02 - VehicleCategory name (STANDARD / ELECTRIC / COMMERCIAL) and the
++    // deposit that category's rules assigned when the car type was created.
++    public string Category { get; set; } = "STANDARD";
++    public double SecurityDeposit { get; set; }
++
+     // Only populated by a hub-scoped call (GetCarTypesForHub) — how many
+     // cars of this type are free to reserve at that hub for the requested
+     // dates right now. Null in the plain catalog listing. 0 means the
+diff --git a/WanderCar_DotNet/src/FlemanApi/DTO/CreateCarTypeRequest.cs b/WanderCar_DotNet/src/FlemanApi/DTO/CreateCarTypeRequest.cs
+new file mode 100644
+index 0000000..df87bc8
+--- /dev/null
++++ b/WanderCar_DotNet/src/FlemanApi/DTO/CreateCarTypeRequest.cs
+@@ -0,0 +1,13 @@
++using FlemanApi.Models;
++
++namespace FlemanApi.DTO;
++
++public class CreateCarTypeRequest
++{
++    public string CarTypeName { get; set; } = string.Empty;
++    public VehicleCategory? Category { get; set; }
++    public double? DailyRate { get; set; }
++    public double? WeeklyRate { get; set; }
++    public double? MonthlyRate { get; set; }
++    public string? ImagePath { get; set; }
++}
+diff --git a/WanderCar_DotNet/src/FlemanApi/Data/FlemanDbContext.cs b/WanderCar_DotNet/src/FlemanApi/Data/FlemanDbContext.cs
+index 08e4c67..2dc28b1 100644
+--- a/WanderCar_DotNet/src/FlemanApi/Data/FlemanDbContext.cs
++++ b/WanderCar_DotNet/src/FlemanApi/Data/FlemanDbContext.cs
+@@ -45,5 +45,12 @@ public class FlemanDbContext : DbContext
+         modelBuilder.Entity<BookingHeader>().Property(b => b.BookingStatus).HasConversion<string>();
+         modelBuilder.Entity<InvoiceHeader>().Property(i => i.PaymentType).HasConversion<string>();
+         modelBuilder.Entity<InvoiceHeader>().Property(i => i.PaymentStatus).HasConversion<string>();
++
++        // CH02 - vehicle category, stored by name; rows that predate the
++        // column are STANDARD.
++        modelBuilder.Entity<CarType>().Property(c => c.Category)
++            .HasConversion<string>()
++            .HasMaxLength(20)
++            .HasDefaultValue(VehicleCategory.STANDARD);
+     }
+ }
+diff --git a/WanderCar_DotNet/src/FlemanApi/Migrations/20261008070000_AddVehicleCategory.Designer.cs b/WanderCar_DotNet/src/FlemanApi/Migrations/20261008070000_AddVehicleCategory.Designer.cs
+new file mode 100644
+index 0000000..e1dd059
+--- /dev/null
++++ b/WanderCar_DotNet/src/FlemanApi/Migrations/20261008070000_AddVehicleCategory.Designer.cs
+@@ -0,0 +1,593 @@
++﻿// <auto-generated />
++using System;
++using FlemanApi.Data;
++using Microsoft.EntityFrameworkCore;
++using Microsoft.EntityFrameworkCore.Infrastructure;
++using Microsoft.EntityFrameworkCore.Metadata;
++using Microsoft.EntityFrameworkCore.Migrations;
++using Microsoft.EntityFrameworkCore.Storage.ValueConversion;
++
++#nullable disable
++
++namespace FlemanApi.Migrations
++{
++    [DbContext(typeof(FlemanDbContext))]
++    [Migration("20261008070000_AddVehicleCategory")]
++    partial class AddVehicleCategory
++    {
++        /// <inheritdoc />
++        protected override void BuildTargetModel(ModelBuilder modelBuilder)
++        {
++#pragma warning disable 612, 618
++            modelBuilder
++                .HasAnnotation("ProductVersion", "8.0.10")
++                .HasAnnotation("Relational:MaxIdentifierLength", 64);
++
++            MySqlModelBuilderExtensions.AutoIncrementColumns(modelBuilder);
++
++            modelBuilder.Entity("FlemanApi.Models.Addon", b =>
++                {
++                    b.Property<long>("AddonId")
++                        .ValueGeneratedOnAdd()
++                        .HasColumnType("bigint");
++
++                    MySqlPropertyBuilderExtensions.UseMySqlIdentityColumn(b.Property<long>("AddonId"));
++
++                    b.Property<string>("AddonName")
++                        .IsRequired()
++                        .HasMaxLength(100)
++                        .HasColumnType("varchar(100)");
++
++                    b.Property<double>("DailyRate")
++                        .HasColumnType("double");
++
++                    b.Property<string>("Description")
++                        .HasMaxLength(500)
++                        .HasColumnType("varchar(500)");
++
++                    b.Property<DateOnly?>("RateValidFrom")
++                        .HasColumnType("date");
++
++                    b.Property<DateOnly?>("RateValidTo")
++                        .HasColumnType("date");
++
++                    b.HasKey("AddonId");
++
++                    b.HasIndex("AddonName")
++                        .IsUnique();
++
++                    b.ToTable("addons");
++                });
++
++            modelBuilder.Entity("FlemanApi.Models.Airport", b =>
++                {
++                    b.Property<long>("AirportId")
++                        .ValueGeneratedOnAdd()
++                        .HasColumnType("bigint");
++
++                    MySqlPropertyBuilderExtensions.UseMySqlIdentityColumn(b.Property<long>("AirportId"));
++
++                    b.Property<string>("AirportCode")
++                        .IsRequired()
++                        .HasMaxLength(10)
++                        .HasColumnType("varchar(10)");
++
++                    b.Property<string>("AirportName")
++                        .IsRequired()
++                        .HasMaxLength(150)
++                        .HasColumnType("varchar(150)");
++
++                    b.Property<long>("CityId")
++                        .HasColumnType("bigint");
++
++                    b.Property<long>("HubId")
++                        .HasColumnType("bigint");
++
++                    b.Property<long>("StateId")
++                        .HasColumnType("bigint");
++
++                    b.HasKey("AirportId");
++
++                    b.HasIndex("AirportCode")
++                        .IsUnique();
++
++                    b.ToTable("airports");
++                });
++
++            modelBuilder.Entity("FlemanApi.Models.BookingDetail", b =>
++                {
++                    b.Property<long>("BookingDetailId")
++                        .ValueGeneratedOnAdd()
++                        .HasColumnType("bigint");
++
++                    MySqlPropertyBuilderExtensions.UseMySqlIdentityColumn(b.Property<long>("BookingDetailId"));
++
++                    b.Property<long>("AddonId")
++                        .HasColumnType("bigint");
++
++                    b.Property<double?>("AddonRate")
++                        .HasColumnType("double");
++
++                    b.Property<long>("BookingId")
++                        .HasColumnType("bigint");
++
++                    b.Property<int?>("Quantity")
++                        .HasColumnType("int");
++
++                    b.Property<double?>("Subtotal")
++                        .HasColumnType("double");
++
++                    b.HasKey("BookingDetailId");
++
++                    b.ToTable("booking_details");
++                });
++
++            modelBuilder.Entity("FlemanApi.Models.BookingHeader", b =>
++                {
++                    b.Property<long>("BookingId")
++                        .ValueGeneratedOnAdd()
++                        .HasColumnType("bigint");
++
++                    MySqlPropertyBuilderExtensions.UseMySqlIdentityColumn(b.Property<long>("BookingId"));
++
++                    b.Property<DateTime?>("ActualHandoverDatetime")
++                        .HasColumnType("datetime(6)");
++
++                    b.Property<DateTime?>("ActualReturnDatetime")
++                        .HasColumnType("datetime(6)");
++
++                    b.Property<DateTime>("BookingDate")
++                        .HasColumnType("datetime(6)");
++
++                    b.Property<string>("BookingStatus")
++                        .HasColumnType("longtext");
++
++                    b.Property<long?>("CarId")
++                        .HasColumnType("bigint");
++
++                    b.Property<long>("CarTypeId")
++                        .HasColumnType("bigint");
++
++                    b.Property<string>("ConfirmationNo")
++                        .IsRequired()
++                        .HasColumnType("varchar(255)");
++
++                    b.Property<long>("CustomerId")
++                        .HasColumnType("bigint");
++
++                    b.Property<long>("DropHubId")
++                        .HasColumnType("bigint");
++
++                    b.Property<double?>("EstimatedAmount")
++                        .HasColumnType("double");
++
++                    b.Property<int?>("HandoverFuelLevel")
++                        .HasColumnType("int");
++
++                    b.Property<DateTime>("PickupDatetime")
++                        .HasColumnType("datetime(6)");
++
++                    b.Property<long>("PickupHubId")
++                        .HasColumnType("bigint");
++
++                    b.Property<string>("Remarks")
++                        .HasMaxLength(255)
++                        .HasColumnType("varchar(255)");
++
++                    b.Property<DateTime>("ReturnDatetime")
++                        .HasColumnType("datetime(6)");
++
++                    b.HasKey("BookingId");
++
++                    b.HasIndex("ConfirmationNo")
++                        .IsUnique();
++
++                    b.ToTable("booking_headers");
++                });
++
++            modelBuilder.Entity("FlemanApi.Models.Car", b =>
++                {
++                    b.Property<long>("CarId")
++                        .ValueGeneratedOnAdd()
++                        .HasColumnType("bigint");
++
++                    MySqlPropertyBuilderExtensions.UseMySqlIdentityColumn(b.Property<long>("CarId"));
++
++                    b.Property<string>("Brand")
++                        .HasMaxLength(50)
++                        .HasColumnType("varchar(50)");
++
++                    b.Property<long>("CarTypeId")
++                        .HasColumnType("bigint");
++
++                    b.Property<string>("Color")
++                        .HasMaxLength(30)
++                        .HasColumnType("varchar(30)");
++
++                    b.Property<int?>("FuelLevel")
++                        .HasColumnType("int");
++
++                    b.Property<string>("FuelType")
++                        .HasColumnType("longtext");
++
++                    b.Property<long>("HubId")
++                        .HasColumnType("bigint");
++
++                    b.Property<bool>("IsAvailable")
++                        .HasColumnType("tinyint(1)");
++
++                    b.Property<int?>("ManufactureYear")
++                        .HasColumnType("int");
++
++                    b.Property<double?>("Mileage")
++                        .HasColumnType("double");
++
++                    b.Property<string>("Model")
++                        .HasMaxLength(50)
++                        .HasColumnType("varchar(50)");
++
++                    b.Property<int?>("Odometer")
++                        .HasColumnType("int");
++
++                    b.Property<int?>("SeatingCapacity")
++                        .HasColumnType("int");
++
++                    b.Property<string>("Status")
++                        .HasColumnType("longtext");
++
++                    b.Property<string>("VehicleNumber")
++                        .IsRequired()
++                        .HasMaxLength(20)
++                        .HasColumnType("varchar(20)");
++
++                    b.HasKey("CarId");
++
++                    b.HasIndex("VehicleNumber")
++                        .IsUnique();
++
++                    b.ToTable("cars");
++                });
++
++            modelBuilder.Entity("FlemanApi.Models.CarType", b =>
++                {
++                    b.Property<long>("CarTypeId")
++                        .ValueGeneratedOnAdd()
++                        .HasColumnType("bigint");
++
++                    MySqlPropertyBuilderExtensions.UseMySqlIdentityColumn(b.Property<long>("CarTypeId"));
++
++                    b.Property<string>("CarTypeName")
++                        .IsRequired()
++                        .HasMaxLength(100)
++                        .HasColumnType("varchar(100)");
++
++                    b.Property<string>("Category")
++                        .IsRequired()
++                        .ValueGeneratedOnAdd()
++                        .HasMaxLength(20)
++                        .HasColumnType("varchar(20)")
++                        .HasDefaultValue("STANDARD");
++
++                    b.Property<double>("DailyRate")
++                        .HasColumnType("double");
++
++                    b.Property<string>("ImagePath")
++                        .HasColumnType("longtext");
++
++                    b.Property<double?>("MonthlyRate")
++                        .HasColumnType("double");
++
++                    b.Property<DateOnly?>("RateValidFrom")
++                        .HasColumnType("date");
++
++                    b.Property<DateOnly?>("RateValidTo")
++                        .HasColumnType("date");
++
++                    b.Property<double>("SecurityDeposit")
++                        .HasColumnType("double");
++
++                    b.Property<double?>("WeeklyRate")
++                        .HasColumnType("double");
++
++                    b.HasKey("CarTypeId");
++
++                    b.HasIndex("CarTypeName")
++                        .IsUnique();
++
++                    b.ToTable("car_types");
++                });
++
++            modelBuilder.Entity("FlemanApi.Models.City", b =>
++                {
++                    b.Property<long>("CityId")
++                        .ValueGeneratedOnAdd()
++                        .HasColumnType("bigint");
++
++                    MySqlPropertyBuilderExtensions.UseMySqlIdentityColumn(b.Property<long>("CityId"));
++
++                    b.Property<string>("CityName")
++                        .IsRequired()
++                        .HasMaxLength(100)
++                        .HasColumnType("varchar(100)");
++
++                    b.Property<long>("StateId")
++                        .HasColumnType("bigint");
++
++                    b.HasKey("CityId");
++
++                    b.ToTable("cities");
++                });
++
++            modelBuilder.Entity("FlemanApi.Models.Customer", b =>
++                {
++                    b.Property<long>("CustomerId")
++                        .ValueGeneratedOnAdd()
++                        .HasColumnType("bigint");
++
++                    MySqlPropertyBuilderExtensions.UseMySqlIdentityColumn(b.Property<long>("CustomerId"));
++
++                    b.Property<string>("Address1")
++                        .HasMaxLength(255)
++                        .HasColumnType("varchar(255)");
++
++                    b.Property<string>("Address2")
++                        .HasMaxLength(255)
++                        .HasColumnType("varchar(255)");
++
++                    b.Property<long?>("CityId")
++                        .HasColumnType("bigint");
++
++                    b.Property<DateOnly?>("DateOfBirth")
++                        .HasColumnType("date");
++
++                    b.Property<string>("DrivingLicenseNo")
++                        .HasMaxLength(30)
++                        .HasColumnType("varchar(30)");
++
++                    b.Property<string>("Email")
++                        .IsRequired()
++                        .HasMaxLength(100)
++                        .HasColumnType("varchar(100)");
++
++                    b.Property<bool?>("EmailVerified")
++                        .HasColumnType("tinyint(1)");
++
++                    b.Property<string>("FullName")
++                        .IsRequired()
++                        .HasMaxLength(100)
++                        .HasColumnType("varchar(100)");
++
++                    b.Property<string>("GovtIdDocument")
++                        .HasColumnType("longtext")
++                        .HasColumnName("govt_id_document");
++
++                    b.Property<string>("GovtIdDocumentName")
++                        .HasMaxLength(255)
++                        .HasColumnType("varchar(255)")
++                        .HasColumnName("govt_id_document_name");
++
++                    b.Property<string>("GovtIdDocumentType")
++                        .HasMaxLength(30)
++                        .HasColumnType("varchar(30)")
++                        .HasColumnName("govt_id_document_type");
++
++                    b.Property<string>("PassportNo")
++                        .HasMaxLength(30)
++                        .HasColumnType("varchar(30)");
++
++                    b.Property<string>("PasswordHash")
++                        .HasColumnType("longtext")
++                        .HasColumnName("password_hash");
++
++                    b.Property<string>("Phone")
++                        .HasMaxLength(15)
++                        .HasColumnType("varchar(15)");
++
++                    b.Property<string>("Pincode")
++                        .HasMaxLength(10)
++                        .HasColumnType("varchar(10)");
++
++                    b.Property<string>("Provider")
++                        .HasMaxLength(20)
++                        .HasColumnType("varchar(20)");
++
++                    b.Property<string>("ProviderId")
++                        .HasMaxLength(100)
++                        .HasColumnType("varchar(100)");
++
++                    b.Property<long?>("StateId")
++                        .HasColumnType("bigint");
++
++                    b.Property<string>("Status")
++                        .HasColumnType("longtext");
++
++                    b.HasKey("CustomerId");
++
++                    b.HasIndex("DrivingLicenseNo")
++                        .IsUnique();
++
++                    b.HasIndex("Email")
++                        .IsUnique();
++
++                    b.HasIndex("Phone")
++                        .IsUnique();
++
++                    b.ToTable("customers");
++                });
++
++            modelBuilder.Entity("FlemanApi.Models.Hub", b =>
++                {
++                    b.Property<long>("HubId")
++                        .ValueGeneratedOnAdd()
++                        .HasColumnType("bigint");
++
++                    MySqlPropertyBuilderExtensions.UseMySqlIdentityColumn(b.Property<long>("HubId"));
++
++                    b.Property<string>("Address")
++                        .HasMaxLength(255)
++                        .HasColumnType("varchar(255)");
++
++                    b.Property<long>("CityId")
++                        .HasColumnType("bigint");
++
++                    b.Property<string>("ContactNo")
++                        .IsRequired()
++                        .HasMaxLength(20)
++                        .HasColumnType("varchar(20)");
++
++                    b.Property<string>("Email")
++                        .HasColumnType("longtext");
++
++                    b.Property<string>("HubName")
++                        .IsRequired()
++                        .HasMaxLength(100)
++                        .HasColumnType("varchar(100)");
++
++                    b.Property<string>("Pincode")
++                        .IsRequired()
++                        .HasMaxLength(10)
++                        .HasColumnType("varchar(10)");
++
++                    b.Property<long>("StateId")
++                        .HasColumnType("bigint");
++
++                    b.HasKey("HubId");
++
++                    b.ToTable("hubs");
++                });
++
++            modelBuilder.Entity("FlemanApi.Models.InvoiceDetail", b =>
++                {
++                    b.Property<long>("InvoiceDetailId")
++                        .ValueGeneratedOnAdd()
++                        .HasColumnType("bigint");
++
++                    MySqlPropertyBuilderExtensions.UseMySqlIdentityColumn(b.Property<long>("InvoiceDetailId"));
++
++                    b.Property<string>("AddonName")
++                        .HasColumnType("longtext");
++
++                    b.Property<double?>("AddonRate")
++                        .HasColumnType("double");
++
++                    b.Property<long>("InvoiceId")
++                        .HasColumnType("bigint");
++
++                    b.Property<int?>("Quantity")
++                        .HasColumnType("int");
++
++                    b.Property<double?>("Subtotal")
++                        .HasColumnType("double");
++
++                    b.HasKey("InvoiceDetailId");
++
++                    b.ToTable("invoice_details");
++                });
++
++            modelBuilder.Entity("FlemanApi.Models.InvoiceHeader", b =>
++                {
++                    b.Property<long>("InvoiceId")
++                        .ValueGeneratedOnAdd()
++                        .HasColumnType("bigint");
++
++                    MySqlPropertyBuilderExtensions.UseMySqlIdentityColumn(b.Property<long>("InvoiceId"));
++
++                    b.Property<double?>("AddonAmount")
++                        .HasColumnType("double");
++
++                    b.Property<long>("BookingId")
++                        .HasColumnType("bigint");
++
++                    b.Property<string>("CustomerName")
++                        .HasColumnType("longtext");
++
++                    b.Property<string>("DamageNotes")
++                        .HasMaxLength(1000)
++                        .HasColumnType("varchar(1000)");
++
++                    b.Property<int?>("Days")
++                        .HasColumnType("int");
++
++                    b.Property<long?>("DropHub")
++                        .HasColumnType("bigint");
++
++                    b.Property<string>("Email")
++                        .HasColumnType("longtext");
++
++                    b.Property<double?>("ExtraChargeAmount")
++                        .HasColumnType("double");
++
++                    b.Property<int?>("ExtraMiles")
++                        .HasColumnType("int");
++
++                    b.Property<double?>("FuelCharge")
++                        .HasColumnType("double");
++
++                    b.Property<DateTime?>("HandoverDatetime")
++                        .HasColumnType("datetime(6)");
++
++                    b.Property<int?>("HandoverFuelLevel")
++                        .HasColumnType("int");
++
++                    b.Property<DateTime>("InvoiceDate")
++                        .HasColumnType("datetime(6)");
++
++                    b.Property<string>("PaymentReference")
++                        .HasColumnType("longtext");
++
++                    b.Property<string>("PaymentStatus")
++                        .HasColumnType("longtext");
++
++                    b.Property<string>("PaymentType")
++                        .HasColumnType("longtext");
++
++                    b.Property<string>("Phone")
++                        .HasColumnType("longtext");
++
++                    b.Property<long?>("PickupHub")
++                        .HasColumnType("bigint");
++
++                    b.Property<double?>("RentalAmount")
++                        .HasColumnType("double");
++
++                    b.Property<DateTime?>("ReturnDatetime")
++                        .HasColumnType("datetime(6)");
++
++                    b.Property<int?>("ReturnFuelLevel")
++                        .HasColumnType("int");
++
++                    b.Property<double?>("TotalAmount")
++                        .HasColumnType("double");
++
++                    b.Property<string>("VehicleNumber")
++                        .HasColumnType("longtext");
++
++                    b.HasKey("InvoiceId");
++
++                    b.ToTable("invoice_headers");
++                });
++
++            modelBuilder.Entity("FlemanApi.Models.State", b =>
++                {
++                    b.Property<long>("StateId")
++                        .ValueGeneratedOnAdd()
++                        .HasColumnType("bigint");
++
++                    MySqlPropertyBuilderExtensions.UseMySqlIdentityColumn(b.Property<long>("StateId"));
++
++                    b.Property<string>("StateName")
++                        .IsRequired()
++                        .HasMaxLength(100)
++                        .HasColumnType("varchar(100)");
++
++                    b.HasKey("StateId");
++
++                    b.HasIndex("StateName")
++                        .IsUnique();
++
++                    b.ToTable("states");
++                });
++#pragma warning restore 612, 618
++        }
++    }
++}
+diff --git a/WanderCar_DotNet/src/FlemanApi/Migrations/20261008070000_AddVehicleCategory.cs b/WanderCar_DotNet/src/FlemanApi/Migrations/20261008070000_AddVehicleCategory.cs
+new file mode 100644
+index 0000000..c8350c3
+--- /dev/null
++++ b/WanderCar_DotNet/src/FlemanApi/Migrations/20261008070000_AddVehicleCategory.cs
+@@ -0,0 +1,42 @@
++﻿using Microsoft.EntityFrameworkCore.Migrations;
++
++#nullable disable
++
++namespace FlemanApi.Migrations
++{
++    /// <inheritdoc />
++    public partial class AddVehicleCategory : Migration
++    {
++        /// <inheritdoc />
++        protected override void Up(MigrationBuilder migrationBuilder)
++        {
++            migrationBuilder.AddColumn<string>(
++                name: "Category",
++                table: "car_types",
++                type: "varchar(20)",
++                maxLength: 20,
++                nullable: false,
++                defaultValue: "STANDARD")
++                .Annotation("MySql:CharSet", "utf8mb4");
++
++            migrationBuilder.AddColumn<double>(
++                name: "SecurityDeposit",
++                table: "car_types",
++                type: "double",
++                nullable: false,
++                defaultValue: 0.0);
++        }
++
++        /// <inheritdoc />
++        protected override void Down(MigrationBuilder migrationBuilder)
++        {
++            migrationBuilder.DropColumn(
++                name: "Category",
++                table: "car_types");
++
++            migrationBuilder.DropColumn(
++                name: "SecurityDeposit",
++                table: "car_types");
++        }
++    }
++}
+diff --git a/WanderCar_DotNet/src/FlemanApi/Migrations/FlemanDbContextModelSnapshot.cs b/WanderCar_DotNet/src/FlemanApi/Migrations/FlemanDbContextModelSnapshot.cs
+index 7ee81f1..640a847 100644
+--- a/WanderCar_DotNet/src/FlemanApi/Migrations/FlemanDbContextModelSnapshot.cs
++++ b/WanderCar_DotNet/src/FlemanApi/Migrations/FlemanDbContextModelSnapshot.cs
+@@ -258,6 +258,13 @@ namespace FlemanApi.Migrations
+                         .HasMaxLength(100)
+                         .HasColumnType("varchar(100)");
+ 
++                    b.Property<string>("Category")
++                        .IsRequired()
++                        .ValueGeneratedOnAdd()
++                        .HasMaxLength(20)
++                        .HasColumnType("varchar(20)")
++                        .HasDefaultValue("STANDARD");
++
+                     b.Property<double>("DailyRate")
+                         .HasColumnType("double");
+ 
+@@ -273,6 +280,9 @@ namespace FlemanApi.Migrations
+                     b.Property<DateOnly?>("RateValidTo")
+                         .HasColumnType("date");
+ 
++                    b.Property<double>("SecurityDeposit")
++                        .HasColumnType("double");
++
+                     b.Property<double?>("WeeklyRate")
+                         .HasColumnType("double");
+ 
+diff --git a/WanderCar_DotNet/src/FlemanApi/Models/CarType.cs b/WanderCar_DotNet/src/FlemanApi/Models/CarType.cs
+index 60c4b7d..7b4d2ae 100644
+--- a/WanderCar_DotNet/src/FlemanApi/Models/CarType.cs
++++ b/WanderCar_DotNet/src/FlemanApi/Models/CarType.cs
+@@ -20,4 +20,9 @@ public class CarType
+     public DateOnly? RateValidFrom { get; set; }
+     public DateOnly? RateValidTo { get; set; }
+     public string? ImagePath { get; set; }
++
++    // CH02 - existing rows default to STANDARD; SecurityDeposit is set by
++    // the category's IVehicleCategoryRules when the car type is created.
++    public VehicleCategory Category { get; set; } = VehicleCategory.STANDARD;
++    public double SecurityDeposit { get; set; }
+ }
+diff --git a/WanderCar_DotNet/src/FlemanApi/Models/VehicleCategory.cs b/WanderCar_DotNet/src/FlemanApi/Models/VehicleCategory.cs
+new file mode 100644
+index 0000000..1c2fa6a
+--- /dev/null
++++ b/WanderCar_DotNet/src/FlemanApi/Models/VehicleCategory.cs
+@@ -0,0 +1,6 @@
++namespace FlemanApi.Models;
++
++// CH02 - the category a car type belongs to. Every car type that existed
++// before this change is STANDARD; ELECTRIC and COMMERCIAL are new. Stored
++// as its string name, like every other enum in this project.
++public enum VehicleCategory { STANDARD, ELECTRIC, COMMERCIAL }
+diff --git a/WanderCar_DotNet/src/FlemanApi/Program.cs b/WanderCar_DotNet/src/FlemanApi/Program.cs
+index ec2283e..fdae61e 100644
+--- a/WanderCar_DotNet/src/FlemanApi/Program.cs
++++ b/WanderCar_DotNet/src/FlemanApi/Program.cs
+@@ -186,6 +186,11 @@ builder.Services.AddScoped<FlemanApi.Repository.IAvailabilityRepository, FlemanA
+ builder.Services.AddScoped<IVehicleService, VehicleService>();
+ builder.Services.AddScoped<IBookingService, BookingService>();
+ 
++// ---- CH02: vehicle categories -------------------------------------------
++builder.Services.AddSingleton<FlemanApi.Service.Categories.IVehicleCategoryRulesFactory,
++    FlemanApi.Service.Categories.VehicleCategoryRulesFactory>();
++builder.Services.AddScoped<ICarTypeService, CarTypeService>();
++
+ builder.Services.Configure<MailSettings>(builder.Configuration.GetSection(MailSettings.SectionName));
+ builder.Services.AddSingleton<IEmailBackgroundQueue, EmailBackgroundQueue>();
+ builder.Services.AddSingleton<IEmailSender, MailKitEmailSender>();
+diff --git a/WanderCar_DotNet/src/FlemanApi/Service/CarTypeService.cs b/WanderCar_DotNet/src/FlemanApi/Service/CarTypeService.cs
+new file mode 100644
+index 0000000..ae91824
+--- /dev/null
++++ b/WanderCar_DotNet/src/FlemanApi/Service/CarTypeService.cs
+@@ -0,0 +1,66 @@
++using System.Net;
++using AutoMapper;
++using FlemanApi.DTO;
++using FlemanApi.Exceptions;
++using FlemanApi.Models;
++using FlemanApi.Repository;
++using FlemanApi.Service.Categories;
++
++namespace FlemanApi.Service;
++
++public class CarTypeService : ICarTypeService
++{
++    private readonly IGenericRepository<CarType, long> _carTypes;
++    private readonly IVehicleCategoryRulesFactory _rulesFactory;
++    private readonly IMapper _mapper;
++
++    public CarTypeService(
++        IGenericRepository<CarType, long> carTypes,
++        IVehicleCategoryRulesFactory rulesFactory,
++        IMapper mapper)
++    {
++        _carTypes = carTypes;
++        _rulesFactory = rulesFactory;
++        _mapper = mapper;
++    }
++
++    public async Task<CarTypeDTO> CreateCarTypeAsync(CreateCarTypeRequest request)
++    {
++        var name = request.CarTypeName.Trim();
++        var lower = name.ToLower();
++        if (await _carTypes.ExistsAsync(c => c.CarTypeName.ToLower() == lower))
++        {
++            throw new ApiException($"A car type with this name already exists: {name}", HttpStatusCode.Conflict);
++        }
++
++        var rules = _rulesFactory.Create(request.Category!.Value);
++        var dailyRate = request.DailyRate!.Value;
++
++        var errors = rules.ValidateRates(dailyRate, request.WeeklyRate, request.MonthlyRate);
++        if (errors.Count > 0)
++        {
++            throw new ApiException(string.Join(", ", errors), HttpStatusCode.BadRequest);
++        }
++
++        var carType = new CarType
++        {
++            CarTypeName = name,
++            DailyRate = dailyRate,
++            WeeklyRate = request.WeeklyRate,
++            MonthlyRate = request.MonthlyRate,
++            ImagePath = request.ImagePath,
++            Category = rules.Category,
++            SecurityDeposit = rules.CalculateSecurityDeposit(dailyRate),
++        };
++
++        await _carTypes.AddAsync(carType);
++        await _carTypes.SaveChangesAsync();
++        return _mapper.Map<CarTypeDTO>(carType);
++    }
++
++    public async Task<IReadOnlyList<CarTypeDTO>> GetCarTypesByCategoryAsync(VehicleCategory category)
++    {
++        var carTypes = await _carTypes.FindAsync(c => c.Category == category);
++        return _mapper.Map<List<CarTypeDTO>>(carTypes);
++    }
++}
+diff --git a/WanderCar_DotNet/src/FlemanApi/Service/Categories/CommercialCategoryRules.cs b/WanderCar_DotNet/src/FlemanApi/Service/Categories/CommercialCategoryRules.cs
+new file mode 100644
+index 0000000..1846e50
+--- /dev/null
++++ b/WanderCar_DotNet/src/FlemanApi/Service/Categories/CommercialCategoryRules.cs
+@@ -0,0 +1,20 @@
++using FlemanApi.Models;
++
++namespace FlemanApi.Service.Categories;
++
++public class CommercialCategoryRules : IVehicleCategoryRules
++{
++    private const double DepositMultiplier = 5.0;
++
++    public VehicleCategory Category => VehicleCategory.COMMERCIAL;
++
++    public double CalculateSecurityDeposit(double dailyRate) => dailyRate * DepositMultiplier;
++
++    // Commercial vehicles are let by the week, so a weekly rate is mandatory.
++    public IReadOnlyList<string> ValidateRates(double dailyRate, double? weeklyRate, double? monthlyRate)
++    {
++        var errors = new List<string>();
++        if (weeklyRate is null) errors.Add("weeklyRate is required for COMMERCIAL car types");
++        return errors;
++    }
++}
+diff --git a/WanderCar_DotNet/src/FlemanApi/Service/Categories/ElectricCategoryRules.cs b/WanderCar_DotNet/src/FlemanApi/Service/Categories/ElectricCategoryRules.cs
+new file mode 100644
+index 0000000..b0c3687
+--- /dev/null
++++ b/WanderCar_DotNet/src/FlemanApi/Service/Categories/ElectricCategoryRules.cs
+@@ -0,0 +1,15 @@
++using FlemanApi.Models;
++
++namespace FlemanApi.Service.Categories;
++
++public class ElectricCategoryRules : IVehicleCategoryRules
++{
++    private const double DepositMultiplier = 2.0;
++
++    public VehicleCategory Category => VehicleCategory.ELECTRIC;
++
++    public double CalculateSecurityDeposit(double dailyRate) => dailyRate * DepositMultiplier;
++
++    public IReadOnlyList<string> ValidateRates(double dailyRate, double? weeklyRate, double? monthlyRate) =>
++        Array.Empty<string>();
++}
+diff --git a/WanderCar_DotNet/src/FlemanApi/Service/Categories/IVehicleCategoryRules.cs b/WanderCar_DotNet/src/FlemanApi/Service/Categories/IVehicleCategoryRules.cs
+new file mode 100644
+index 0000000..939adee
+--- /dev/null
++++ b/WanderCar_DotNet/src/FlemanApi/Service/Categories/IVehicleCategoryRules.cs
+@@ -0,0 +1,17 @@
++using FlemanApi.Models;
++
++namespace FlemanApi.Service.Categories;
++
++// CH02 - the rules that differ from one vehicle category to another.
++// One implementation per VehicleCategory, obtained through
++// IVehicleCategoryRulesFactory rather than constructed by callers.
++public interface IVehicleCategoryRules
++{
++    VehicleCategory Category { get; }
++
++    // Refundable deposit recorded on a car type of this category.
++    double CalculateSecurityDeposit(double dailyRate);
++
++    // Category-specific rate checks; empty when the rates are acceptable.
++    IReadOnlyList<string> ValidateRates(double dailyRate, double? weeklyRate, double? monthlyRate);
++}
+diff --git a/WanderCar_DotNet/src/FlemanApi/Service/Categories/StandardCategoryRules.cs b/WanderCar_DotNet/src/FlemanApi/Service/Categories/StandardCategoryRules.cs
+new file mode 100644
+index 0000000..e835c1c
+--- /dev/null
++++ b/WanderCar_DotNet/src/FlemanApi/Service/Categories/StandardCategoryRules.cs
+@@ -0,0 +1,14 @@
++using FlemanApi.Models;
++
++namespace FlemanApi.Service.Categories;
++
++// Every car type that existed before CH02: no deposit, no extra rate rule.
++public class StandardCategoryRules : IVehicleCategoryRules
++{
++    public VehicleCategory Category => VehicleCategory.STANDARD;
++
++    public double CalculateSecurityDeposit(double dailyRate) => 0.0;
++
++    public IReadOnlyList<string> ValidateRates(double dailyRate, double? weeklyRate, double? monthlyRate) =>
++        Array.Empty<string>();
++}
+diff --git a/WanderCar_DotNet/src/FlemanApi/Service/Categories/VehicleCategoryRulesFactory.cs b/WanderCar_DotNet/src/FlemanApi/Service/Categories/VehicleCategoryRulesFactory.cs
+new file mode 100644
+index 0000000..ccc5c67
+--- /dev/null
++++ b/WanderCar_DotNet/src/FlemanApi/Service/Categories/VehicleCategoryRulesFactory.cs
+@@ -0,0 +1,24 @@
++using System.Net;
++using FlemanApi.Exceptions;
++using FlemanApi.Models;
++
++namespace FlemanApi.Service.Categories;
++
++public interface IVehicleCategoryRulesFactory
++{
++    IVehicleCategoryRules Create(VehicleCategory category);
++}
++
++// CH02 - parameterized factory method: the only place that knows which
++// concrete rules class belongs to which category. Adding a category means
++// adding one enum member, one rules class and one arm here.
++public class VehicleCategoryRulesFactory : IVehicleCategoryRulesFactory
++{
++    public IVehicleCategoryRules Create(VehicleCategory category) => category switch
++    {
++        VehicleCategory.STANDARD => new StandardCategoryRules(),
++        VehicleCategory.ELECTRIC => new ElectricCategoryRules(),
++        VehicleCategory.COMMERCIAL => new CommercialCategoryRules(),
++        _ => throw new ApiException($"Unsupported vehicle category: {category}", HttpStatusCode.BadRequest),
++    };
++}
+diff --git a/WanderCar_DotNet/src/FlemanApi/Service/ICarTypeService.cs b/WanderCar_DotNet/src/FlemanApi/Service/ICarTypeService.cs
+new file mode 100644
+index 0000000..900b4b7
+--- /dev/null
++++ b/WanderCar_DotNet/src/FlemanApi/Service/ICarTypeService.cs
+@@ -0,0 +1,12 @@
++using FlemanApi.DTO;
++using FlemanApi.Models;
++
++namespace FlemanApi.Service;
++
++// CH02 - car-type administration by category. Kept apart from
++// IVehicleService so the existing read-only catalogue is untouched.
++public interface ICarTypeService
++{
++    Task<CarTypeDTO> CreateCarTypeAsync(CreateCarTypeRequest request);
++    Task<IReadOnlyList<CarTypeDTO>> GetCarTypesByCategoryAsync(VehicleCategory category);
++}
+diff --git a/WanderCar_DotNet/src/FlemanApi/Validators/CreateCarTypeRequestValidator.cs b/WanderCar_DotNet/src/FlemanApi/Validators/CreateCarTypeRequestValidator.cs
+new file mode 100644
+index 0000000..04bd4d1
+--- /dev/null
++++ b/WanderCar_DotNet/src/FlemanApi/Validators/CreateCarTypeRequestValidator.cs
+@@ -0,0 +1,32 @@
++using FlemanApi.DTO;
++using FluentValidation;
++
++namespace FlemanApi.Validators;
++
++// Shape checks only. Category-specific rate rules live in
++// IVehicleCategoryRules and are applied by CarTypeService.
++public class CreateCarTypeRequestValidator : AbstractValidator<CreateCarTypeRequest>
++{
++    public CreateCarTypeRequestValidator()
++    {
++        RuleFor(x => x.CarTypeName)
++            .NotEmpty().WithMessage("carTypeName is required")
++            .MaximumLength(100).WithMessage("carTypeName must be at most 100 characters");
++
++        RuleFor(x => x.Category)
++            .NotNull().WithMessage("category is required")
++            .IsInEnum().WithMessage("category must be STANDARD, ELECTRIC or COMMERCIAL");
++
++        RuleFor(x => x.DailyRate)
++            .NotNull().WithMessage("dailyRate is required")
++            .GreaterThan(0).WithMessage("dailyRate must be greater than 0");
++
++        RuleFor(x => x.WeeklyRate)
++            .GreaterThan(0).When(x => x.WeeklyRate is not null)
++            .WithMessage("weeklyRate must be greater than 0");
++
++        RuleFor(x => x.MonthlyRate)
++            .GreaterThan(0).When(x => x.MonthlyRate is not null)
++            .WithMessage("monthlyRate must be greater than 0");
++    }
++}

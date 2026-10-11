@@ -1,0 +1,6 @@
+<Solution>
+  <Folder Name="/src/">
+    <Project Path="src/FlemanApi.Tests/FlemanApi.Tests.csproj" />
+    <Project Path="src/FlemanApi/FlemanApi.csproj" />
+  </Folder>
+</Solution>

@@ -1,0 +1,107 @@
+PART 2 — PATTERN EVOLUTION: PROMPTS GIVEN TO THE LLM
+
+Case study:
+Design Pattern Identification and Evolution in an ASP.NET Core-Based Vehicle Rental Application
+
+Application:
+WanderCar / Fleman Vehicle Rental and Fleet Management Application
+https://github.com/Naveen-verma-7697/FleetManagment
+Baseline commit dfc61ab8dd6f9bbb2301171457dc03946a249576
+Source in scope: WanderCar_DotNet/src/FlemanApi and WanderCar_DotNet/src/FlemanApi.Tests
+
+This file lists the Part 2 prompts in the order they were used. Each entry says
+whether the exact prompt text is stored in this repository. Where it is not, the
+entry says so; nothing has been written from memory or reconstructed.
+
+Which folder holds which change:
+  Part2/changes/Change1  fleet-maintenance scheduling        State           Samridhi Singh
+  Part2/changes/Change2  new vehicle categories              Factory Method  Bhavana P H
+  Part2/changes/Change3  interchangeable pricing policies    Strategy        Neema Vinod
+  Part2/changes/Change4  booking lifecycle notifications     Observer        Vani Sugovind S R
+The documents inside the folders use the branch labels their authors worked with
+(CH03 in Change1, CH02 in Change2 and in Change3, CH04 in Change4).
+
+
+============================================================
+PROMPTS 1-3 — Change4, booking lifecycle notifications (Observer)
+============================================================
+Model: Claude Opus 5.5 (claude-opus-5-5) in Claude Code, 2026-10-10
+Prompt 1 is the brief stored in full in:
+  Part2/changes/Change4/prompt.md
+Prompts 2 and 3 were follow-up chat messages in the same session. Their exact
+text was not saved to this repository.
+  [TO BE PASTED BY THE CHANGE OWNER — exact text not available here]
+Output: Part2/changes/Change4/ (diff.patch, requirement.md, pattern_effect.md,
+refactoring.md, metrics.csv, test_result.txt, test_result_baseline.txt)
+
+
+============================================================
+PROMPT 4 — first pattern counts (superseded)
+============================================================
+Model: Claude Opus 5.5 (claude-opus-5-5) in Claude Code, 2026-10-11
+A chat request for pattern counts of the original code and of the code after
+Change4 alone. Its exact text was not saved to this repository.
+  [TO BE PASTED BY THE CHANGE OWNER — exact text not available here]
+Its output, an earlier Pattern_count.csv and pattern_evaluation.csv with a
+12-instance baseline, was replaced by the output of prompt 5, which starts from
+the 9 confirmed instances of Part1/part1_patterns.csv.
+
+
+============================================================
+PROMPTS FOR Change1, Change2 AND Change3
+============================================================
+Change1 (State): Part2/changes/Change1/prompt is an empty file. The prompt
+used for this change is not stored in this repository.
+  [TO BE PASTED BY THE CHANGE OWNER — exact text not available here]
+
+Change2 (Factory Method): no prompt file in Part2/changes/Change2. The prompt
+used for this change is not stored in this repository.
+  [TO BE PASTED BY THE CHANGE OWNER — exact text not available here]
+
+Change3 (Strategy): no prompt file in Part2/changes/Change3. The prompt used
+for this change is not stored in this repository.
+  [TO BE PASTED BY THE CHANGE OWNER — exact text not available here]
+
+
+============================================================
+PROMPT 5 — integrate the four changes; diagrams; pattern CSVs; README
+============================================================
+Model: Claude Opus 5.5 (claude-opus-5-5) in Claude Code, 2026-10-11
+Attached with the prompt: three screenshots of the assignment handout (the
+Part 2 folder layout; the column definitions of patterns.csv,
+pattern_counts.csv and patterns_evolution.csv; the README.md requirements).
+Exact text of the prompt:
+
+the original source code of the application is available in B6/data/code. we introduced 4 new features to the original code, which can be seen in part 2/changes. there is detailed explanation of the new changes in requirement.md and all the additional design patterns included and their test results in the changes folder. now what i need is to get the evolved application code AFTER adding the changes and new features in the Part2/code/ folder. along with that i need the updated UML diagrams in Part2/diagrams/ folder as well as the final llm.csv file. i also need part2+prompt.txt to be filled, pattern_count.csv, pattern_evaluation.csv
+
+also update the main root folder README.md which should contain all the details from the entire repository. image has been uploaded for additional info on README.md
+
+Input the model read:
+  B6/data/code/WanderCar_DotNet (original code)
+  B6/Part1/part1_patterns.csv, part1_pattern_count.csv, baseline_commit.txt, inspected_modules.txt
+  B6/Part2/changes/Change1..Change4 (all documents; diff.patch of Change3 and Change4)
+  The diff.patch of Change2, taken from the owner's working folder and now copied
+  into Part2/changes/Change2/
+  B6/Part3 (READMEs, llm/pattern_crosslanguage.csv) and B6/data/test_result for the README
+
+Output:
+  Part2/code/WanderCar_DotNet/           evolved application source
+  Part2/code/test_result.txt             build and test log of the evolved code
+  Part2/changes/integration/             one cumulative patch per change, with a README
+  Part2/diagrams/*.puml and *.png        nine diagrams
+  Part2/pattern_evaluation.csv           55 rows
+  Part2/Pattern_count.csv                65 rows
+  Part2/llm.csv, Part2/part2_prompt.txt  this record
+  README.md (repository root)
+
+What the model had to decide without being told, so a reader can check it:
+  1. Change1 has no diff.patch and its source code is not in the repository. The
+     model wrote the Change1 code again from Change1/requirement.md,
+     pattern_effect.md and the 50 test names in Change1/test_result.txt. It is a
+     reconstruction, not Samridhi Singh's original source.
+  2. Change3 and Change4 were each written against the original code, so they
+     overlap in BookingService.cs, Program.cs and BookingServiceTests.cs. The
+     model merged them and made two integration edits, listed in
+     Part2/changes/integration/README.md.
+  3. The baseline rows of pattern_evaluation.csv are the nine Part 1 rows,
+     unchanged, and the changes are applied in folder order Change1 to Change4.

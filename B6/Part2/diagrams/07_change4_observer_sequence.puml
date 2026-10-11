@@ -1,0 +1,53 @@
+@startuml 07_change4_observer_sequence
+title Change4 - creating a booking: publish, notify, queue the e-mail (code after Change4)
+skinparam shadowing false
+skinparam sequence {
+  ParticipantBackgroundColor #E1BEE7
+  ParticipantBorderColor Black
+  ArrowColor Black
+  LifeLineBorderColor Black
+}
+
+actor Customer
+participant BookingController #FFFFFF
+participant BookingService #FFFFFF
+participant IPricingPolicySelector #BBDEFB
+participant BookingEventPublisher
+participant EmailBookingObserver
+participant AuditLogBookingObserver
+participant EmailService #FFFFFF
+participant EmailBackgroundQueue #FFFFFF
+
+Customer -> BookingController : POST /api/bookings
+BookingController -> BookingService : CreateBookingAsync(request)
+BookingService -> BookingService : validate, check capacity
+BookingService -> IPricingPolicySelector : SelectPolicy(carType, pickup, return)
+IPricingPolicySelector --> BookingService : IPricingPolicy
+BookingService -> BookingService : CalculatePrice, save booking
+
+BookingService -> BookingService : PublishBookingEventAsync(CREATED, header)
+BookingService -> BookingEventPublisher : PublishAsync(BookingEvent)
+
+BookingEventPublisher -> EmailBookingObserver : OnBookingEventAsync(event)
+EmailBookingObserver -> EmailService : SendEmailAsync(to, subject, body)
+EmailService -> EmailBackgroundQueue : Enqueue(work item)
+EmailService --> EmailBookingObserver
+EmailBookingObserver --> BookingEventPublisher
+
+BookingEventPublisher -> AuditLogBookingObserver : OnBookingEventAsync(event)
+AuditLogBookingObserver -> AuditLogBookingObserver : LogInformation("Booking audit: ...")
+AuditLogBookingObserver --> BookingEventPublisher
+
+BookingEventPublisher --> BookingService
+BookingService --> BookingController : BookingResponseDTO
+BookingController --> Customer : 200 OK
+
+note over BookingEventPublisher
+  An observer that throws is logged as a warning and skipped;
+  the next observer still runs and the HTTP result does not change.
+end note
+note over EmailBackgroundQueue
+  EmailQueueHostedService sends the queued
+  e-mail later, on a background thread.
+end note
+@enduml

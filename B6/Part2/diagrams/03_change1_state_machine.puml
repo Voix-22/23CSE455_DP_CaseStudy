@@ -1,0 +1,36 @@
+@startuml 03_change1_state_machine
+title Change1 - maintenance schedule transitions and their effect on the car
+skinparam shadowing false
+skinparam state {
+  BackgroundColor #FFE0B2
+  BorderColor Black
+}
+
+[*] --> SCHEDULED : POST /api/staff/maintenance\n(car exists, date is today or later)
+
+SCHEDULED --> IN_PROGRESS : start\n[car is AVAILABLE]\ncar -> UNDER_MAINTENANCE, StartedAt = now
+SCHEDULED --> CANCELLED : cancel\ncar untouched
+IN_PROGRESS --> COMPLETED : complete\ncar -> AVAILABLE, CompletedAt = now
+IN_PROGRESS --> CANCELLED : cancel\ncar -> AVAILABLE
+
+COMPLETED --> [*]
+CANCELLED --> [*]
+
+note right of SCHEDULED
+  start with a car that is BOOKED or
+  UNDER_MAINTENANCE: 409, nothing changes
+  complete: 409
+end note
+
+note right of IN_PROGRESS
+  start: 409
+end note
+
+note bottom of COMPLETED
+  start, complete, cancel: 409
+end note
+
+note bottom of CANCELLED
+  start, complete, cancel: 409
+end note
+@enduml

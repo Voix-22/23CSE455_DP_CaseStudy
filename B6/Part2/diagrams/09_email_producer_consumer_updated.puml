@@ -1,0 +1,40 @@
+@startuml 09_email_producer_consumer_updated
+!pragma layout smetana
+title Email Background Work Queue - updated (code after Change4)\nthe producer has a new caller
+skinparam shadowing false
+skinparam classAttributeIconSize 0
+skinparam class {
+  BackgroundColor White
+  BorderColor Black
+}
+hide empty members
+
+class BookingService
+class BookingEventPublisher #E1BEE7
+class EmailBookingObserver #E1BEE7
+class CustomerService
+class StaffService
+class EmailService <<Producer>>
+interface IEmailBackgroundQueue <<Queue>>
+class EmailBackgroundQueue
+class EmailQueueHostedService <<Consumer>>
+interface IEmailSender
+class MailKitEmailSender
+
+BookingService --> BookingEventPublisher : PublishAsync
+BookingEventPublisher --> EmailBookingObserver : OnBookingEventAsync
+EmailBookingObserver --> EmailService : created / modified / cancelled e-mail
+CustomerService --> EmailService : welcome e-mail
+StaffService --> EmailService : return invoice e-mail
+EmailService --> IEmailBackgroundQueue : Enqueue
+IEmailBackgroundQueue <|.. EmailBackgroundQueue
+EmailQueueHostedService --> IEmailBackgroundQueue : ReadAllAsync
+EmailQueueHostedService --> IEmailSender : runs each work item
+IEmailSender <|.. MailKitEmailSender
+
+legend bottom
+  Purple: added by Change4. Before Change4, BookingService called
+  EmailService directly and only for the confirmation e-mail.
+  Queue, producer, consumer and sender classes are not edited.
+endlegend
+@enduml

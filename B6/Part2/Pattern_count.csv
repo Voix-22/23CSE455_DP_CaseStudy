@@ -1,26 +1,66 @@
 source_version,summary,pattern_name,count
-Original code (baseline dfc61ab8),per_pattern,Repository,2
-Original code (baseline dfc61ab8),per_pattern,Dependency Injection,1
-Original code (baseline dfc61ab8),per_pattern,Service Layer,1
-Original code (baseline dfc61ab8),per_pattern,Data Transfer Object,1
-Original code (baseline dfc61ab8),per_pattern,Chain of Responsibility,1
-Original code (baseline dfc61ab8),per_pattern,Producer-Consumer,1
-Original code (baseline dfc61ab8),per_pattern,Command,1
-Original code (baseline dfc61ab8),per_pattern,Adapter,2
-Original code (baseline dfc61ab8),per_pattern,Proxy,1
-Original code (baseline dfc61ab8),per_pattern,Strangler Fig,1
-Original code (baseline dfc61ab8),total_pattern_types,,10
-Original code (baseline dfc61ab8),total_pattern_instances,,12
-Code after Change4 (ch04 9be38a6f),per_pattern,Repository,2
-Code after Change4 (ch04 9be38a6f),per_pattern,Dependency Injection,1
-Code after Change4 (ch04 9be38a6f),per_pattern,Service Layer,1
-Code after Change4 (ch04 9be38a6f),per_pattern,Data Transfer Object,1
-Code after Change4 (ch04 9be38a6f),per_pattern,Chain of Responsibility,1
-Code after Change4 (ch04 9be38a6f),per_pattern,Producer-Consumer,1
-Code after Change4 (ch04 9be38a6f),per_pattern,Command,1
-Code after Change4 (ch04 9be38a6f),per_pattern,Adapter,2
-Code after Change4 (ch04 9be38a6f),per_pattern,Proxy,1
-Code after Change4 (ch04 9be38a6f),per_pattern,Strangler Fig,1
-Code after Change4 (ch04 9be38a6f),per_pattern,Observer,1
-Code after Change4 (ch04 9be38a6f),total_pattern_types,,11
-Code after Change4 (ch04 9be38a6f),total_pattern_instances,,13
+dfc61ab8dd6f9bbb2301171457dc03946a249576,per_pattern,Repository,1
+dfc61ab8dd6f9bbb2301171457dc03946a249576,per_pattern,Dependency Injection / IoC,1
+dfc61ab8dd6f9bbb2301171457dc03946a249576,per_pattern,Service Layer,1
+dfc61ab8dd6f9bbb2301171457dc03946a249576,per_pattern,Middleware Pipeline / Chain of Responsibility,1
+dfc61ab8dd6f9bbb2301171457dc03946a249576,per_pattern,Producer–Consumer,1
+dfc61ab8dd6f9bbb2301171457dc03946a249576,per_pattern,Adapter,1
+dfc61ab8dd6f9bbb2301171457dc03946a249576,per_pattern,Proxy,1
+dfc61ab8dd6f9bbb2301171457dc03946a249576,per_pattern,Strangler Fig,1
+dfc61ab8dd6f9bbb2301171457dc03946a249576,per_pattern,DTO,1
+dfc61ab8dd6f9bbb2301171457dc03946a249576,total_pattern_types,,9
+dfc61ab8dd6f9bbb2301171457dc03946a249576,total_pattern_instances,,9
+Code after Change1,per_pattern,Repository,1
+Code after Change1,per_pattern,Dependency Injection / IoC,1
+Code after Change1,per_pattern,Service Layer,1
+Code after Change1,per_pattern,Middleware Pipeline / Chain of Responsibility,1
+Code after Change1,per_pattern,Producer–Consumer,1
+Code after Change1,per_pattern,Adapter,1
+Code after Change1,per_pattern,Proxy,1
+Code after Change1,per_pattern,Strangler Fig,1
+Code after Change1,per_pattern,DTO,1
+Code after Change1,per_pattern,State,1
+Code after Change1,total_pattern_types,,10
+Code after Change1,total_pattern_instances,,10
+Code after Change2,per_pattern,Repository,1
+Code after Change2,per_pattern,Dependency Injection / IoC,1
+Code after Change2,per_pattern,Service Layer,1
+Code after Change2,per_pattern,Middleware Pipeline / Chain of Responsibility,1
+Code after Change2,per_pattern,Producer–Consumer,1
+Code after Change2,per_pattern,Adapter,1
+Code after Change2,per_pattern,Proxy,1
+Code after Change2,per_pattern,Strangler Fig,1
+Code after Change2,per_pattern,DTO,1
+Code after Change2,per_pattern,State,1
+Code after Change2,per_pattern,Factory Method,1
+Code after Change2,total_pattern_types,,11
+Code after Change2,total_pattern_instances,,11
+Code after Change3,per_pattern,Repository,1
+Code after Change3,per_pattern,Dependency Injection / IoC,1
+Code after Change3,per_pattern,Service Layer,1
+Code after Change3,per_pattern,Middleware Pipeline / Chain of Responsibility,1
+Code after Change3,per_pattern,Producer–Consumer,1
+Code after Change3,per_pattern,Adapter,1
+Code after Change3,per_pattern,Proxy,1
+Code after Change3,per_pattern,Strangler Fig,1
+Code after Change3,per_pattern,DTO,1
+Code after Change3,per_pattern,State,1
+Code after Change3,per_pattern,Factory Method,1
+Code after Change3,per_pattern,Strategy,1
+Code after Change3,total_pattern_types,,12
+Code after Change3,total_pattern_instances,,12
+Code after Change4,per_pattern,Repository,1
+Code after Change4,per_pattern,Dependency Injection / IoC,1
+Code after Change4,per_pattern,Service Layer,1
+Code after Change4,per_pattern,Middleware Pipeline / Chain of Responsibility,1
+Code after Change4,per_pattern,Producer–Consumer,1
+Code after Change4,per_pattern,Adapter,1
+Code after Change4,per_pattern,Proxy,1
+Code after Change4,per_pattern,Strangler Fig,1
+Code after Change4,per_pattern,DTO,1
+Code after Change4,per_pattern,State,1
+Code after Change4,per_pattern,Factory Method,1
+Code after Change4,per_pattern,Strategy,1
+Code after Change4,per_pattern,Observer,1
+Code after Change4,total_pattern_types,,13
+Code after Change4,total_pattern_instances,,13

@@ -1,0 +1,2182 @@
+diff --git a/WanderCar_DotNet/src/FlemanApi.Tests/Services/MaintenanceFleetAvailabilityTests.cs b/WanderCar_DotNet/src/FlemanApi.Tests/Services/MaintenanceFleetAvailabilityTests.cs
+new file mode 100644
+index 0000000..a35cf4f
+--- /dev/null
++++ b/WanderCar_DotNet/src/FlemanApi.Tests/Services/MaintenanceFleetAvailabilityTests.cs
+@@ -0,0 +1,126 @@
++using FlemanApi.Data;
++using FlemanApi.DTO;
++using FlemanApi.Models;
++using FlemanApi.Repository;
++using FlemanApi.Service;
++using FlemanApi.Tests.TestHelpers;
++using FluentAssertions;
++using Microsoft.EntityFrameworkCore;
++using Microsoft.Extensions.Logging.Abstractions;
++using Moq;
++
++namespace FlemanApi.Tests.Services;
++
++// Acceptance criterion 1 of CH03: the existing fleet-availability code reacts
++// to maintenance with no change of its own. The unchanged AvailabilityRepository
++// and StaffService read the same InMemory database MaintenanceService writes to.
++[TestFixture]
++public class MaintenanceFleetAvailabilityTests
++{
++    private static readonly DateTime FixedNow = new(2026, 10, 10, 9, 30, 0);
++
++    private FlemanDbContext _context = null!;
++    private AvailabilityRepository _availability = null!;
++    private StaffService _staffService = null!;
++    private MaintenanceService _maintenanceService = null!;
++
++    [SetUp]
++    public async Task SetUp()
++    {
++        var options = new DbContextOptionsBuilder<FlemanDbContext>()
++            .UseInMemoryDatabase(Guid.NewGuid().ToString())
++            .Options;
++        _context = new FlemanDbContext(options);
++
++        _context.Cars.AddRange(
++            new Car { CarId = 1, HubId = 1, CarTypeId = 1, VehicleNumber = "MH01AA1111", Status = CarStatus.AVAILABLE, IsAvailable = true },
++            new Car { CarId = 2, HubId = 1, CarTypeId = 1, VehicleNumber = "MH01AA2222", Status = CarStatus.AVAILABLE, IsAvailable = true });
++        _context.BookingHeaders.Add(new BookingHeader
++        {
++            BookingId = 1,
++            ConfirmationNo = "ABC12345",
++            BookingDate = FixedNow,
++            CustomerId = 1,
++            CarTypeId = 1,
++            PickupHubId = 1,
++            DropHubId = 1,
++            PickupDatetime = FixedNow.AddDays(1),
++            ReturnDatetime = FixedNow.AddDays(3),
++            BookingStatus = BookingStatus.CONFIRMED,
++        });
++        await _context.SaveChangesAsync();
++
++        var clock = new FixedTimeProvider(FixedNow);
++        var cars = new GenericRepository<Car, long>(_context);
++        _availability = new AvailabilityRepository(_context);
++
++        var vehicleService = new Mock<IVehicleService>();
++        vehicleService.Setup(v => v.GetCarByIdAsync(It.IsAny<long>()))
++            .ReturnsAsync((long id) => new CarDTO { CarId = id });
++
++        _staffService = new StaffService(
++            new GenericRepository<BookingHeader, long>(_context),
++            new GenericRepository<BookingDetail, long>(_context),
++            cars,
++            new GenericRepository<CarType, long>(_context),
++            new GenericRepository<Customer, long>(_context),
++            new GenericRepository<Addon, long>(_context),
++            new GenericRepository<InvoiceHeader, long>(_context),
++            new GenericRepository<InvoiceDetail, long>(_context),
++            _availability,
++            Mock.Of<IBookingService>(),
++            vehicleService.Object,
++            Mock.Of<IEmailService>(),
++            Mock.Of<IInvoicePdfService>(),
++            NullLogger<StaffService>.Instance);
++
++        _maintenanceService = new MaintenanceService(
++            new GenericRepository<MaintenanceSchedule, long>(_context), cars, clock);
++    }
++
++    [TearDown]
++    public void TearDown() => _context.Dispose();
++
++    private async Task<long[]> HandoverPickerCarIdsAsync() =>
++        (await _staffService.GetAvailableCarsForHandoverAsync("ABC12345")).Select(c => c.CarId).OrderBy(id => id).ToArray();
++
++    private async Task<MaintenanceScheduleDTO> ScheduleForCar1Async() =>
++        await _maintenanceService.ScheduleAsync(new ScheduleMaintenanceRequest
++        {
++            CarId = 1,
++            MaintenanceType = MaintenanceType.REPAIR,
++            ScheduledDate = FixedNow,
++        });
++
++    [Test]
++    public async Task StartingMaintenance_RemovesCarFromCapacityAndHandoverPicker()
++    {
++        var schedule = await ScheduleForCar1Async();
++
++        (await _availability.CountCapacityAsync(1, 1)).Should().Be(2, "scheduling alone changes nothing");
++        (await HandoverPickerCarIdsAsync()).Should().Equal(1, 2);
++
++        await _maintenanceService.StartAsync(schedule.MaintenanceScheduleId, new MaintenanceTransitionRequest());
++
++        (await _availability.CountCapacityAsync(1, 1)).Should().Be(1);
++        (await HandoverPickerCarIdsAsync()).Should().Equal(2);
++        var dashboard = (await _availability.CountByCarTypeAsync(1)).Single();
++        dashboard.AvailableCars.Should().Be(1);
++        dashboard.MaintenanceCars.Should().Be(1);
++    }
++
++    [Test]
++    public async Task CompletingMaintenance_PutsCarBackIntoCapacityAndHandoverPicker()
++    {
++        var schedule = await ScheduleForCar1Async();
++        await _maintenanceService.StartAsync(schedule.MaintenanceScheduleId, new MaintenanceTransitionRequest());
++
++        await _maintenanceService.CompleteAsync(schedule.MaintenanceScheduleId, new MaintenanceTransitionRequest());
++
++        (await _availability.CountCapacityAsync(1, 1)).Should().Be(2);
++        (await HandoverPickerCarIdsAsync()).Should().Equal(1, 2);
++        var dashboard = (await _availability.CountByCarTypeAsync(1)).Single();
++        dashboard.AvailableCars.Should().Be(2);
++        dashboard.MaintenanceCars.Should().Be(0);
++    }
++}
+diff --git a/WanderCar_DotNet/src/FlemanApi.Tests/Services/MaintenanceServiceTests.cs b/WanderCar_DotNet/src/FlemanApi.Tests/Services/MaintenanceServiceTests.cs
+new file mode 100644
+index 0000000..f93b145
+--- /dev/null
++++ b/WanderCar_DotNet/src/FlemanApi.Tests/Services/MaintenanceServiceTests.cs
+@@ -0,0 +1,337 @@
++using System.Net;
++using FlemanApi.DTO;
++using FlemanApi.Exceptions;
++using FlemanApi.Models;
++using FlemanApi.Service;
++using FlemanApi.Tests.TestHelpers;
++using FluentAssertions;
++
++namespace FlemanApi.Tests.Services;
++
++[TestFixture]
++public class MaintenanceServiceTests
++{
++    // A Saturday morning; "today" is 2026-10-10.
++    private static readonly DateTime FixedNow = new(2026, 10, 10, 9, 30, 0);
++    private static readonly DateTime Today = FixedNow.Date;
++
++    private List<MaintenanceSchedule> _schedules = null!;
++    private List<Car> _cars = null!;
++    private FixedTimeProvider _clock = null!;
++    private MaintenanceService _service = null!;
++
++    [SetUp]
++    public void SetUp()
++    {
++        _schedules = new List<MaintenanceSchedule>();
++        _cars = new List<Car>
++        {
++            new() { CarId = 1, CarTypeId = 1, HubId = 1, VehicleNumber = "MH01AA1111", Status = CarStatus.AVAILABLE, IsAvailable = true },
++            new() { CarId = 2, CarTypeId = 1, HubId = 1, VehicleNumber = "MH01AA2222", Status = CarStatus.BOOKED, IsAvailable = false },
++        };
++        _clock = new FixedTimeProvider(FixedNow);
++
++        _service = new MaintenanceService(
++            MockRepositoryFactory.Create<MaintenanceSchedule, long>(
++                _schedules, m => m.MaintenanceScheduleId, (m, id) => m.MaintenanceScheduleId = id).Object,
++            MockRepositoryFactory.Create<Car, long>(_cars, c => c.CarId).Object,
++            _clock);
++    }
++
++    private static ScheduleMaintenanceRequest MakeRequest(long? carId, DateTime date) => new()
++    {
++        CarId = carId,
++        MaintenanceType = MaintenanceType.SERVICE,
++        ScheduledDate = date,
++    };
++
++    private MaintenanceSchedule Given(MaintenanceStatus status, DateTime date, long carId = 1, string? notes = null)
++    {
++        var schedule = new MaintenanceSchedule
++        {
++            MaintenanceScheduleId = _schedules.Count + 1,
++            CarId = carId,
++            MaintenanceType = MaintenanceType.SERVICE,
++            ScheduledDate = date,
++            Status = status,
++            Notes = notes,
++        };
++        _schedules.Add(schedule);
++        return schedule;
++    }
++
++    private Car CarById(long id) => _cars.Single(c => c.CarId == id);
++
++    private static async Task AssertStatusAsync(Func<Task> act, HttpStatusCode expected) =>
++        (await act.Should().ThrowAsync<ApiException>()).Which.Status.Should().Be(expected);
++
++    // ---- Schedule ----------------------------------------------------------
++
++    [Test]
++    public async Task ScheduleAsync_FutureDate_CreatesScheduledItem()
++    {
++        var request = MakeRequest(1, Today.AddDays(3).AddHours(15));
++        request.MaintenanceType = MaintenanceType.INSPECTION;
++        request.Notes = "  annual check  ";
++
++        var result = await _service.ScheduleAsync(request);
++
++        result.MaintenanceScheduleId.Should().Be(1);
++        result.CarId.Should().Be(1);
++        result.MaintenanceType.Should().Be(MaintenanceType.INSPECTION);
++        result.Status.Should().Be(MaintenanceStatus.SCHEDULED);
++        result.ScheduledDate.Should().Be(Today.AddDays(3), "the time part is dropped");
++        result.Notes.Should().Be("annual check");
++        result.StartedAt.Should().BeNull();
++        _schedules.Should().ContainSingle();
++        CarById(1).Status.Should().Be(CarStatus.AVAILABLE, "scheduling alone does not take the car out of service");
++    }
++
++    [Test]
++    public async Task ScheduleAsync_Today_IsAllowed()
++    {
++        var result = await _service.ScheduleAsync(MakeRequest(1, Today));
++
++        result.ScheduledDate.Should().Be(Today);
++        result.Status.Should().Be(MaintenanceStatus.SCHEDULED);
++    }
++
++    [Test]
++    public async Task ScheduleAsync_Yesterday_ThrowsBadRequest()
++    {
++        await AssertStatusAsync(() => _service.ScheduleAsync(MakeRequest(1, Today.AddDays(-1))), HttpStatusCode.BadRequest);
++
++        _schedules.Should().BeEmpty();
++    }
++
++    [Test]
++    public async Task ScheduleAsync_UnknownCar_ThrowsNotFound()
++    {
++        await AssertStatusAsync(() => _service.ScheduleAsync(MakeRequest(99, Today)), HttpStatusCode.NotFound);
++
++        _schedules.Should().BeEmpty();
++    }
++
++    [Test]
++    public async Task ScheduleAsync_MissingCarId_ThrowsBadRequest()
++    {
++        await AssertStatusAsync(() => _service.ScheduleAsync(MakeRequest(null, Today)), HttpStatusCode.BadRequest);
++
++        _schedules.Should().BeEmpty();
++    }
++
++    [Test]
++    public async Task ScheduleAsync_CarCurrentlyBooked_IsStillAllowed()
++    {
++        var result = await _service.ScheduleAsync(MakeRequest(2, Today.AddDays(1)));
++
++        result.Status.Should().Be(MaintenanceStatus.SCHEDULED);
++        CarById(2).Status.Should().Be(CarStatus.BOOKED);
++    }
++
++    // ---- Start -------------------------------------------------------------
++
++    [Test]
++    public async Task StartAsync_ScheduledAndCarAvailable_TakesCarOutOfService()
++    {
++        var schedule = Given(MaintenanceStatus.SCHEDULED, Today);
++
++        var result = await _service.StartAsync(schedule.MaintenanceScheduleId, new MaintenanceTransitionRequest());
++
++        result.Status.Should().Be(MaintenanceStatus.IN_PROGRESS);
++        result.StartedAt.Should().Be(FixedNow);
++        CarById(1).Status.Should().Be(CarStatus.UNDER_MAINTENANCE);
++        CarById(1).IsAvailable.Should().BeFalse();
++    }
++
++    [Test]
++    public async Task StartAsync_CarBooked_ThrowsConflictAndChangesNothing()
++    {
++        var schedule = Given(MaintenanceStatus.SCHEDULED, Today, carId: 2);
++
++        await AssertStatusAsync(
++            () => _service.StartAsync(schedule.MaintenanceScheduleId, new MaintenanceTransitionRequest { Notes = "ignored" }),
++            HttpStatusCode.Conflict);
++
++        schedule.Status.Should().Be(MaintenanceStatus.SCHEDULED);
++        schedule.StartedAt.Should().BeNull();
++        schedule.Notes.Should().BeNull();
++        CarById(2).Status.Should().Be(CarStatus.BOOKED);
++    }
++
++    [Test]
++    public async Task StartAsync_FromCompleted_ThrowsConflictAndChangesNothing()
++    {
++        var schedule = Given(MaintenanceStatus.COMPLETED, Today);
++
++        await AssertStatusAsync(
++            () => _service.StartAsync(schedule.MaintenanceScheduleId, new MaintenanceTransitionRequest()),
++            HttpStatusCode.Conflict);
++
++        schedule.Status.Should().Be(MaintenanceStatus.COMPLETED);
++        schedule.StartedAt.Should().BeNull();
++        CarById(1).Status.Should().Be(CarStatus.AVAILABLE);
++    }
++
++    [Test]
++    public async Task StartAsync_UnknownSchedule_ThrowsNotFound()
++    {
++        await AssertStatusAsync(() => _service.StartAsync(42, new MaintenanceTransitionRequest()), HttpStatusCode.NotFound);
++    }
++
++    [Test]
++    public async Task StartAsync_WithNotes_AppendsLabelledNote()
++    {
++        var schedule = Given(MaintenanceStatus.SCHEDULED, Today, notes: "oil change");
++
++        var result = await _service.StartAsync(
++            schedule.MaintenanceScheduleId, new MaintenanceTransitionRequest { Notes = "bay 2" });
++
++        result.Notes.Should().Be("oil change | Start: bay 2");
++    }
++
++    [Test]
++    public async Task StartAsync_NotesWouldOverflowColumn_ThrowsBadRequestAndChangesNothing()
++    {
++        var existing = new string('x', 495);
++        var schedule = Given(MaintenanceStatus.SCHEDULED, Today, notes: existing);
++
++        await AssertStatusAsync(
++            () => _service.StartAsync(schedule.MaintenanceScheduleId, new MaintenanceTransitionRequest { Notes = "bay 2" }),
++            HttpStatusCode.BadRequest);
++
++        schedule.Status.Should().Be(MaintenanceStatus.SCHEDULED);
++        schedule.StartedAt.Should().BeNull();
++        schedule.Notes.Should().Be(existing);
++        CarById(1).Status.Should().Be(CarStatus.AVAILABLE);
++        CarById(1).IsAvailable.Should().BeTrue();
++    }
++
++    // ---- Complete ----------------------------------------------------------
++
++    [Test]
++    public async Task CompleteAsync_InProgress_ReleasesCar()
++    {
++        var schedule = Given(MaintenanceStatus.SCHEDULED, Today);
++        await _service.StartAsync(schedule.MaintenanceScheduleId, new MaintenanceTransitionRequest());
++        _clock.SetNow(FixedNow.AddHours(4));
++
++        var result = await _service.CompleteAsync(schedule.MaintenanceScheduleId, new MaintenanceTransitionRequest());
++
++        result.Status.Should().Be(MaintenanceStatus.COMPLETED);
++        result.StartedAt.Should().Be(FixedNow);
++        result.CompletedAt.Should().Be(FixedNow.AddHours(4));
++        CarById(1).Status.Should().Be(CarStatus.AVAILABLE);
++        CarById(1).IsAvailable.Should().BeTrue();
++    }
++
++    [Test]
++    public async Task CompleteAsync_FromScheduled_ThrowsConflictAndChangesNothing()
++    {
++        var schedule = Given(MaintenanceStatus.SCHEDULED, Today, carId: 2);
++
++        await AssertStatusAsync(
++            () => _service.CompleteAsync(schedule.MaintenanceScheduleId, new MaintenanceTransitionRequest()),
++            HttpStatusCode.Conflict);
++
++        schedule.Status.Should().Be(MaintenanceStatus.SCHEDULED);
++        schedule.CompletedAt.Should().BeNull();
++        CarById(2).Status.Should().Be(CarStatus.BOOKED, "a refused transition must not release a car it never took");
++    }
++
++    // ---- Cancel ------------------------------------------------------------
++
++    [Test]
++    public async Task CancelAsync_FromScheduled_LeavesCarAlone()
++    {
++        var schedule = Given(MaintenanceStatus.SCHEDULED, Today, carId: 2);
++
++        var result = await _service.CancelAsync(
++            schedule.MaintenanceScheduleId, new MaintenanceTransitionRequest { Notes = "not needed" });
++
++        result.Status.Should().Be(MaintenanceStatus.CANCELLED);
++        result.Notes.Should().Be("Cancel: not needed");
++        CarById(2).Status.Should().Be(CarStatus.BOOKED);
++        CarById(2).IsAvailable.Should().BeFalse();
++    }
++
++    [Test]
++    public async Task CancelAsync_FromInProgress_ReleasesCar()
++    {
++        var schedule = Given(MaintenanceStatus.SCHEDULED, Today);
++        await _service.StartAsync(schedule.MaintenanceScheduleId, new MaintenanceTransitionRequest());
++
++        var result = await _service.CancelAsync(schedule.MaintenanceScheduleId, new MaintenanceTransitionRequest());
++
++        result.Status.Should().Be(MaintenanceStatus.CANCELLED);
++        result.CompletedAt.Should().BeNull();
++        CarById(1).Status.Should().Be(CarStatus.AVAILABLE);
++        CarById(1).IsAvailable.Should().BeTrue();
++    }
++
++    // ---- Due / overdue -----------------------------------------------------
++
++    [Test]
++    public async Task GetDueAsync_ReturnsOnlyScheduledItemsForToday()
++    {
++        Given(MaintenanceStatus.SCHEDULED, Today.AddDays(-1));
++        var dueToday = Given(MaintenanceStatus.SCHEDULED, Today);
++        Given(MaintenanceStatus.SCHEDULED, Today.AddDays(1));
++        Given(MaintenanceStatus.IN_PROGRESS, Today);
++        Given(MaintenanceStatus.COMPLETED, Today);
++        Given(MaintenanceStatus.CANCELLED, Today);
++
++        var due = await _service.GetDueAsync();
++
++        due.Select(d => d.MaintenanceScheduleId).Should().Equal(dueToday.MaintenanceScheduleId);
++    }
++
++    [Test]
++    public async Task GetOverdueAsync_ReturnsOnlyScheduledItemsBeforeToday()
++    {
++        var yesterday = Given(MaintenanceStatus.SCHEDULED, Today.AddDays(-1));
++        var lastWeek = Given(MaintenanceStatus.SCHEDULED, Today.AddDays(-7));
++        Given(MaintenanceStatus.SCHEDULED, Today);
++        Given(MaintenanceStatus.IN_PROGRESS, Today.AddDays(-2));
++        Given(MaintenanceStatus.COMPLETED, Today.AddDays(-2));
++        Given(MaintenanceStatus.CANCELLED, Today.AddDays(-2));
++
++        var overdue = await _service.GetOverdueAsync();
++
++        overdue.Select(d => d.MaintenanceScheduleId)
++            .Should().Equal(lastWeek.MaintenanceScheduleId, yesterday.MaintenanceScheduleId);
++    }
++
++    [Test]
++    public async Task DueAndOverdue_AtMidnight_TodayIsDueAndYesterdayIsOverdue()
++    {
++        var yesterday = Given(MaintenanceStatus.SCHEDULED, Today.AddDays(-1));
++        var today = Given(MaintenanceStatus.SCHEDULED, Today);
++        _clock.SetNow(Today);
++
++        var due = await _service.GetDueAsync();
++        var overdue = await _service.GetOverdueAsync();
++
++        due.Select(d => d.MaintenanceScheduleId).Should().Equal(today.MaintenanceScheduleId);
++        overdue.Select(d => d.MaintenanceScheduleId).Should().Equal(yesterday.MaintenanceScheduleId);
++    }
++
++    [Test]
++    public async Task DueAndOverdue_OneTickBeforeMidnight_StillTheSameDay()
++    {
++        var today = Given(MaintenanceStatus.SCHEDULED, Today);
++        var tomorrow = Given(MaintenanceStatus.SCHEDULED, Today.AddDays(1));
++        _clock.SetNow(Today.AddDays(1).AddTicks(-1));
++
++        var due = await _service.GetDueAsync();
++        var overdue = await _service.GetOverdueAsync();
++
++        due.Select(d => d.MaintenanceScheduleId).Should().Equal(today.MaintenanceScheduleId);
++        overdue.Should().BeEmpty();
++
++        // One tick later the day rolls over.
++        _clock.SetNow(Today.AddDays(1));
++        (await _service.GetDueAsync()).Select(d => d.MaintenanceScheduleId).Should().Equal(tomorrow.MaintenanceScheduleId);
++        (await _service.GetOverdueAsync()).Select(d => d.MaintenanceScheduleId).Should().Equal(today.MaintenanceScheduleId);
++    }
++}
+diff --git a/WanderCar_DotNet/src/FlemanApi.Tests/Services/MaintenanceStateTests.cs b/WanderCar_DotNet/src/FlemanApi.Tests/Services/MaintenanceStateTests.cs
+new file mode 100644
+index 0000000..e86403e
+--- /dev/null
++++ b/WanderCar_DotNet/src/FlemanApi.Tests/Services/MaintenanceStateTests.cs
+@@ -0,0 +1,195 @@
++using System.Net;
++using FlemanApi.Exceptions;
++using FlemanApi.Models;
++using FlemanApi.Service.Maintenance;
++using FluentAssertions;
++
++namespace FlemanApi.Tests.Services;
++
++// The State pattern on its own: no service, no repository, no mocks.
++[TestFixture]
++public class MaintenanceStateTests
++{
++    private static readonly DateTime Now = new(2026, 10, 10, 9, 30, 0);
++
++    private static MaintenanceContext MakeContext(
++        MaintenanceStatus status, CarStatus carStatus, out MaintenanceSchedule schedule, out Car car)
++    {
++        schedule = new MaintenanceSchedule
++        {
++            MaintenanceScheduleId = 1,
++            CarId = 7,
++            MaintenanceType = MaintenanceType.SERVICE,
++            ScheduledDate = Now.Date,
++            Status = status,
++        };
++        car = new Car
++        {
++            CarId = 7,
++            VehicleNumber = "MH01AA1111",
++            Status = carStatus,
++            IsAvailable = carStatus == CarStatus.AVAILABLE,
++        };
++        return new MaintenanceContext(schedule, car, Now);
++    }
++
++    private static void AssertConflictAndNothingChanged(
++        Action act, MaintenanceSchedule schedule, Car car, MaintenanceStatus status, CarStatus carStatus)
++    {
++        act.Should().Throw<ApiException>().Which.Status.Should().Be(HttpStatusCode.Conflict);
++
++        schedule.Status.Should().Be(status);
++        schedule.StartedAt.Should().BeNull();
++        schedule.CompletedAt.Should().BeNull();
++        car.Status.Should().Be(carStatus);
++        car.IsAvailable.Should().Be(carStatus == CarStatus.AVAILABLE);
++    }
++
++    [TestCase(MaintenanceStatus.SCHEDULED, typeof(ScheduledState))]
++    [TestCase(MaintenanceStatus.IN_PROGRESS, typeof(InProgressState))]
++    [TestCase(MaintenanceStatus.COMPLETED, typeof(CompletedState))]
++    [TestCase(MaintenanceStatus.CANCELLED, typeof(CancelledState))]
++    public void Context_PicksStateMatchingPersistedStatus(MaintenanceStatus status, Type expectedState)
++    {
++        var context = MakeContext(status, CarStatus.AVAILABLE, out _, out _);
++
++        context.State.Should().BeOfType(expectedState);
++        context.State.Status.Should().Be(status);
++    }
++
++    // ---- SCHEDULED ---------------------------------------------------------
++
++    [Test]
++    public void Scheduled_Start_AvailableCar_MovesToInProgressAndTakesCarOutOfService()
++    {
++        var context = MakeContext(MaintenanceStatus.SCHEDULED, CarStatus.AVAILABLE, out var schedule, out var car);
++
++        context.Start();
++
++        schedule.Status.Should().Be(MaintenanceStatus.IN_PROGRESS);
++        schedule.StartedAt.Should().Be(Now);
++        context.State.Should().BeSameAs(InProgressState.Instance);
++        car.Status.Should().Be(CarStatus.UNDER_MAINTENANCE);
++        car.IsAvailable.Should().BeFalse();
++    }
++
++    [TestCase(CarStatus.BOOKED)]
++    [TestCase(CarStatus.UNDER_MAINTENANCE)]
++    public void Scheduled_Start_CarNotAvailable_ThrowsConflictAndChangesNothing(CarStatus carStatus)
++    {
++        var context = MakeContext(MaintenanceStatus.SCHEDULED, carStatus, out var schedule, out var car);
++
++        AssertConflictAndNothingChanged(context.Start, schedule, car, MaintenanceStatus.SCHEDULED, carStatus);
++    }
++
++    [Test]
++    public void Scheduled_Complete_ThrowsConflictAndChangesNothing()
++    {
++        var context = MakeContext(MaintenanceStatus.SCHEDULED, CarStatus.AVAILABLE, out var schedule, out var car);
++
++        AssertConflictAndNothingChanged(context.Complete, schedule, car, MaintenanceStatus.SCHEDULED, CarStatus.AVAILABLE);
++    }
++
++    [Test]
++    public void Scheduled_Cancel_MovesToCancelledAndLeavesCarAlone()
++    {
++        var context = MakeContext(MaintenanceStatus.SCHEDULED, CarStatus.BOOKED, out var schedule, out var car);
++
++        context.Cancel();
++
++        schedule.Status.Should().Be(MaintenanceStatus.CANCELLED);
++        context.State.Should().BeSameAs(CancelledState.Instance);
++        car.Status.Should().Be(CarStatus.BOOKED);
++        car.IsAvailable.Should().BeFalse();
++    }
++
++    // ---- IN_PROGRESS -------------------------------------------------------
++
++    [Test]
++    public void InProgress_Start_ThrowsConflictAndChangesNothing()
++    {
++        var context = MakeContext(MaintenanceStatus.IN_PROGRESS, CarStatus.UNDER_MAINTENANCE, out var schedule, out var car);
++
++        AssertConflictAndNothingChanged(context.Start, schedule, car, MaintenanceStatus.IN_PROGRESS, CarStatus.UNDER_MAINTENANCE);
++    }
++
++    [Test]
++    public void InProgress_Complete_MovesToCompletedAndReleasesCar()
++    {
++        var context = MakeContext(MaintenanceStatus.IN_PROGRESS, CarStatus.UNDER_MAINTENANCE, out var schedule, out var car);
++
++        context.Complete();
++
++        schedule.Status.Should().Be(MaintenanceStatus.COMPLETED);
++        schedule.CompletedAt.Should().Be(Now);
++        context.State.Should().BeSameAs(CompletedState.Instance);
++        car.Status.Should().Be(CarStatus.AVAILABLE);
++        car.IsAvailable.Should().BeTrue();
++    }
++
++    [Test]
++    public void InProgress_Cancel_MovesToCancelledAndReleasesCar()
++    {
++        var context = MakeContext(MaintenanceStatus.IN_PROGRESS, CarStatus.UNDER_MAINTENANCE, out var schedule, out var car);
++
++        context.Cancel();
++
++        schedule.Status.Should().Be(MaintenanceStatus.CANCELLED);
++        schedule.CompletedAt.Should().BeNull();
++        context.State.Should().BeSameAs(CancelledState.Instance);
++        car.Status.Should().Be(CarStatus.AVAILABLE);
++        car.IsAvailable.Should().BeTrue();
++    }
++
++    // ---- COMPLETED (terminal) ----------------------------------------------
++
++    [Test]
++    public void Completed_Start_ThrowsConflictAndChangesNothing()
++    {
++        var context = MakeContext(MaintenanceStatus.COMPLETED, CarStatus.AVAILABLE, out var schedule, out var car);
++
++        AssertConflictAndNothingChanged(context.Start, schedule, car, MaintenanceStatus.COMPLETED, CarStatus.AVAILABLE);
++    }
++
++    [Test]
++    public void Completed_Complete_ThrowsConflictAndChangesNothing()
++    {
++        var context = MakeContext(MaintenanceStatus.COMPLETED, CarStatus.AVAILABLE, out var schedule, out var car);
++
++        AssertConflictAndNothingChanged(context.Complete, schedule, car, MaintenanceStatus.COMPLETED, CarStatus.AVAILABLE);
++    }
++
++    [Test]
++    public void Completed_Cancel_ThrowsConflictAndChangesNothing()
++    {
++        var context = MakeContext(MaintenanceStatus.COMPLETED, CarStatus.AVAILABLE, out var schedule, out var car);
++
++        AssertConflictAndNothingChanged(context.Cancel, schedule, car, MaintenanceStatus.COMPLETED, CarStatus.AVAILABLE);
++    }
++
++    // ---- CANCELLED (terminal) ----------------------------------------------
++
++    [Test]
++    public void Cancelled_Start_ThrowsConflictAndChangesNothing()
++    {
++        var context = MakeContext(MaintenanceStatus.CANCELLED, CarStatus.AVAILABLE, out var schedule, out var car);
++
++        AssertConflictAndNothingChanged(context.Start, schedule, car, MaintenanceStatus.CANCELLED, CarStatus.AVAILABLE);
++    }
++
++    [Test]
++    public void Cancelled_Complete_ThrowsConflictAndChangesNothing()
++    {
++        var context = MakeContext(MaintenanceStatus.CANCELLED, CarStatus.AVAILABLE, out var schedule, out var car);
++
++        AssertConflictAndNothingChanged(context.Complete, schedule, car, MaintenanceStatus.CANCELLED, CarStatus.AVAILABLE);
++    }
++
++    [Test]
++    public void Cancelled_Cancel_ThrowsConflictAndChangesNothing()
++    {
++        var context = MakeContext(MaintenanceStatus.CANCELLED, CarStatus.AVAILABLE, out var schedule, out var car);
++
++        AssertConflictAndNothingChanged(context.Cancel, schedule, car, MaintenanceStatus.CANCELLED, CarStatus.AVAILABLE);
++    }
++}
+diff --git a/WanderCar_DotNet/src/FlemanApi.Tests/TestHelpers/FixedTimeProvider.cs b/WanderCar_DotNet/src/FlemanApi.Tests/TestHelpers/FixedTimeProvider.cs
+new file mode 100644
+index 0000000..70d7f6a
+--- /dev/null
++++ b/WanderCar_DotNet/src/FlemanApi.Tests/TestHelpers/FixedTimeProvider.cs
+@@ -0,0 +1,19 @@
++namespace FlemanApi.Tests.TestHelpers;
++
++// A clock the test sets by hand. LocalTimeZone is UTC so GetLocalNow()
++// returns exactly the wall-clock value passed in, on any machine.
++public sealed class FixedTimeProvider : TimeProvider
++{
++    private DateTimeOffset _now;
++
++    public FixedTimeProvider(DateTime now)
++    {
++        SetNow(now);
++    }
++
++    public void SetNow(DateTime now) =>
++        _now = new DateTimeOffset(DateTime.SpecifyKind(now, DateTimeKind.Utc));
++
++    public override DateTimeOffset GetUtcNow() => _now;
++    public override TimeZoneInfo LocalTimeZone => TimeZoneInfo.Utc;
++}
+diff --git a/WanderCar_DotNet/src/FlemanApi.Tests/Validators/MaintenanceRequestValidatorsTests.cs b/WanderCar_DotNet/src/FlemanApi.Tests/Validators/MaintenanceRequestValidatorsTests.cs
+new file mode 100644
+index 0000000..38f7886
+--- /dev/null
++++ b/WanderCar_DotNet/src/FlemanApi.Tests/Validators/MaintenanceRequestValidatorsTests.cs
+@@ -0,0 +1,124 @@
++using FlemanApi.DTO;
++using FlemanApi.Models;
++using FlemanApi.Validators;
++using FluentValidation.TestHelper;
++
++namespace FlemanApi.Tests.Validators;
++
++[TestFixture]
++public class ScheduleMaintenanceRequestValidatorTests
++{
++    private readonly ScheduleMaintenanceRequestValidator _validator = new();
++
++    private static ScheduleMaintenanceRequest MakeValidRequest() => new()
++    {
++        CarId = 1,
++        MaintenanceType = MaintenanceType.SERVICE,
++        ScheduledDate = new DateTime(2026, 10, 12),
++        Notes = "oil change",
++    };
++
++    [Test]
++    public void Validate_ValidRequest_Passes()
++    {
++        var result = _validator.TestValidate(MakeValidRequest());
++
++        result.ShouldNotHaveAnyValidationErrors();
++    }
++
++    [Test]
++    public void Validate_NullCarId_HasError()
++    {
++        var request = MakeValidRequest();
++        request.CarId = null;
++
++        var result = _validator.TestValidate(request);
++
++        result.ShouldHaveValidationErrorFor(x => x.CarId).WithErrorMessage("carId is required");
++    }
++
++    [Test]
++    public void Validate_NullMaintenanceType_HasError()
++    {
++        var request = MakeValidRequest();
++        request.MaintenanceType = null;
++
++        var result = _validator.TestValidate(request);
++
++        result.ShouldHaveValidationErrorFor(x => x.MaintenanceType).WithErrorMessage("maintenanceType is required");
++    }
++
++    [Test]
++    public void Validate_UndefinedMaintenanceType_HasError()
++    {
++        var request = MakeValidRequest();
++        request.MaintenanceType = (MaintenanceType)999;
++
++        var result = _validator.TestValidate(request);
++
++        result.ShouldHaveValidationErrorFor(x => x.MaintenanceType);
++    }
++
++    [Test]
++    public void Validate_NullScheduledDate_HasError()
++    {
++        var request = MakeValidRequest();
++        request.ScheduledDate = null;
++
++        var result = _validator.TestValidate(request);
++
++        result.ShouldHaveValidationErrorFor(x => x.ScheduledDate).WithErrorMessage("scheduledDate is required");
++    }
++
++    [Test]
++    public void Validate_NullNotes_Passes()
++    {
++        var request = MakeValidRequest();
++        request.Notes = null;
++
++        var result = _validator.TestValidate(request);
++
++        result.ShouldNotHaveAnyValidationErrors();
++    }
++
++    [Test]
++    public void Validate_NotesTooLong_HasError()
++    {
++        var request = MakeValidRequest();
++        request.Notes = new string('x', 501);
++
++        var result = _validator.TestValidate(request);
++
++        result.ShouldHaveValidationErrorFor(x => x.Notes).WithErrorMessage("notes must be at most 500 characters");
++    }
++}
++
++[TestFixture]
++public class MaintenanceTransitionRequestValidatorTests
++{
++    private readonly MaintenanceTransitionRequestValidator _validator = new();
++
++    [Test]
++    public void Validate_EmptyBody_Passes()
++    {
++        var result = _validator.TestValidate(new MaintenanceTransitionRequest());
++
++        result.ShouldNotHaveAnyValidationErrors();
++    }
++
++    [Test]
++    public void Validate_NotesAtLimit_Passes()
++    {
++        var result = _validator.TestValidate(new MaintenanceTransitionRequest { Notes = new string('x', 500) });
++
++        result.ShouldNotHaveAnyValidationErrors();
++    }
++
++    [Test]
++    public void Validate_NotesTooLong_HasError()
++    {
++        var result = _validator.TestValidate(new MaintenanceTransitionRequest { Notes = new string('x', 501) });
++
++        result.ShouldHaveValidationErrorFor(x => x.Notes).WithErrorMessage("notes must be at most 500 characters");
++    }
++}
+diff --git a/WanderCar_DotNet/src/FlemanApi/Controllers/MaintenanceController.cs b/WanderCar_DotNet/src/FlemanApi/Controllers/MaintenanceController.cs
+new file mode 100644
+index 0000000..2b5d15c
+--- /dev/null
++++ b/WanderCar_DotNet/src/FlemanApi/Controllers/MaintenanceController.cs
+@@ -0,0 +1,47 @@
++using FlemanApi.DTO;
++using FlemanApi.Service;
++using Microsoft.AspNetCore.Authorization;
++using Microsoft.AspNetCore.Mvc;
++
++namespace FlemanApi.Controllers;
++
++// CH03 - fleet-maintenance scheduling, staff only.
++[ApiController]
++[Route("api/staff/maintenance")]
++[Authorize(Roles = "STAFF")]
++public class MaintenanceController : ControllerBase
++{
++    private readonly IMaintenanceService _maintenanceService;
++
++    public MaintenanceController(IMaintenanceService maintenanceService)
++    {
++        _maintenanceService = maintenanceService;
++    }
++
++    [HttpPost]
++    public async Task<IActionResult> Schedule([FromBody] ScheduleMaintenanceRequest request) =>
++        Ok(await _maintenanceService.ScheduleAsync(request));
++
++    // SCHEDULED items dated today.
++    [HttpGet("due")]
++    public async Task<IActionResult> GetDue() => Ok(await _maintenanceService.GetDueAsync());
++
++    // SCHEDULED items dated before today.
++    [HttpGet("overdue")]
++    public async Task<IActionResult> GetOverdue() => Ok(await _maintenanceService.GetOverdueAsync());
++
++    [HttpGet("{id:long}")]
++    public async Task<IActionResult> GetById(long id) => Ok(await _maintenanceService.GetByIdAsync(id));
++
++    [HttpPost("{id:long}/start")]
++    public async Task<IActionResult> Start(long id, [FromBody] MaintenanceTransitionRequest? request) =>
++        Ok(await _maintenanceService.StartAsync(id, request ?? new MaintenanceTransitionRequest()));
++
++    [HttpPost("{id:long}/complete")]
++    public async Task<IActionResult> Complete(long id, [FromBody] MaintenanceTransitionRequest? request) =>
++        Ok(await _maintenanceService.CompleteAsync(id, request ?? new MaintenanceTransitionRequest()));
++
++    [HttpPost("{id:long}/cancel")]
++    public async Task<IActionResult> Cancel(long id, [FromBody] MaintenanceTransitionRequest? request) =>
++        Ok(await _maintenanceService.CancelAsync(id, request ?? new MaintenanceTransitionRequest()));
++}
+diff --git a/WanderCar_DotNet/src/FlemanApi/DTO/MaintenanceScheduleDTO.cs b/WanderCar_DotNet/src/FlemanApi/DTO/MaintenanceScheduleDTO.cs
+new file mode 100644
+index 0000000..22160be
+--- /dev/null
++++ b/WanderCar_DotNet/src/FlemanApi/DTO/MaintenanceScheduleDTO.cs
+@@ -0,0 +1,15 @@
++using FlemanApi.Models;
++
++namespace FlemanApi.DTO;
++
++public class MaintenanceScheduleDTO
++{
++    public long MaintenanceScheduleId { get; set; }
++    public long CarId { get; set; }
++    public MaintenanceType MaintenanceType { get; set; }
++    public DateTime ScheduledDate { get; set; }
++    public MaintenanceStatus Status { get; set; }
++    public DateTime? StartedAt { get; set; }
++    public DateTime? CompletedAt { get; set; }
++    public string? Notes { get; set; }
++}
+diff --git a/WanderCar_DotNet/src/FlemanApi/DTO/MaintenanceTransitionRequest.cs b/WanderCar_DotNet/src/FlemanApi/DTO/MaintenanceTransitionRequest.cs
+new file mode 100644
+index 0000000..19e172d
+--- /dev/null
++++ b/WanderCar_DotNet/src/FlemanApi/DTO/MaintenanceTransitionRequest.cs
+@@ -0,0 +1,7 @@
++namespace FlemanApi.DTO;
++
++// Optional body of the start / complete / cancel endpoints.
++public class MaintenanceTransitionRequest
++{
++    public string? Notes { get; set; }
++}
+diff --git a/WanderCar_DotNet/src/FlemanApi/DTO/ScheduleMaintenanceRequest.cs b/WanderCar_DotNet/src/FlemanApi/DTO/ScheduleMaintenanceRequest.cs
+new file mode 100644
+index 0000000..f985674
+--- /dev/null
++++ b/WanderCar_DotNet/src/FlemanApi/DTO/ScheduleMaintenanceRequest.cs
+@@ -0,0 +1,11 @@
++using FlemanApi.Models;
++
++namespace FlemanApi.DTO;
++
++public class ScheduleMaintenanceRequest
++{
++    public long? CarId { get; set; }
++    public MaintenanceType? MaintenanceType { get; set; }
++    public DateTime? ScheduledDate { get; set; }
++    public string? Notes { get; set; }
++}
+diff --git a/WanderCar_DotNet/src/FlemanApi/Data/FlemanDbContext.cs b/WanderCar_DotNet/src/FlemanApi/Data/FlemanDbContext.cs
+index 08e4c67..db14a00 100644
+--- a/WanderCar_DotNet/src/FlemanApi/Data/FlemanDbContext.cs
++++ b/WanderCar_DotNet/src/FlemanApi/Data/FlemanDbContext.cs
+@@ -19,6 +19,7 @@ public class FlemanDbContext : DbContext
+     public DbSet<BookingDetail> BookingDetails => Set<BookingDetail>();
+     public DbSet<InvoiceHeader> InvoiceHeaders => Set<InvoiceHeader>();
+     public DbSet<InvoiceDetail> InvoiceDetails => Set<InvoiceDetail>();
++    public DbSet<MaintenanceSchedule> MaintenanceSchedules => Set<MaintenanceSchedule>();
+ 
+     protected override void OnModelCreating(ModelBuilder modelBuilder)
+     {
+@@ -45,5 +46,16 @@ public class FlemanDbContext : DbContext
+         modelBuilder.Entity<BookingHeader>().Property(b => b.BookingStatus).HasConversion<string>();
+         modelBuilder.Entity<InvoiceHeader>().Property(i => i.PaymentType).HasConversion<string>();
+         modelBuilder.Entity<InvoiceHeader>().Property(i => i.PaymentStatus).HasConversion<string>();
++
++        // CH03 - maintenance scheduling. Enums by name, as above; the
++        // indexes serve the per-car lookup and the due / overdue lists.
++        modelBuilder.Entity<MaintenanceSchedule>().Property(m => m.MaintenanceType)
++            .HasConversion<string>()
++            .HasMaxLength(20);
++        modelBuilder.Entity<MaintenanceSchedule>().Property(m => m.Status)
++            .HasConversion<string>()
++            .HasMaxLength(20);
++        modelBuilder.Entity<MaintenanceSchedule>().HasIndex(m => m.CarId);
++        modelBuilder.Entity<MaintenanceSchedule>().HasIndex(m => new { m.Status, m.ScheduledDate });
+     }
+ }
+diff --git a/WanderCar_DotNet/src/FlemanApi/Migrations/20261010083000_AddMaintenanceSchedules.Designer.cs b/WanderCar_DotNet/src/FlemanApi/Migrations/20261010083000_AddMaintenanceSchedules.Designer.cs
+new file mode 100644
+index 0000000..d6a6924
+--- /dev/null
++++ b/WanderCar_DotNet/src/FlemanApi/Migrations/20261010083000_AddMaintenanceSchedules.Designer.cs
+@@ -0,0 +1,626 @@
++﻿// <auto-generated />
++using System;
++using FlemanApi.Data;
++using Microsoft.EntityFrameworkCore;
++using Microsoft.EntityFrameworkCore.Infrastructure;
++using Microsoft.EntityFrameworkCore.Metadata;
++using Microsoft.EntityFrameworkCore.Migrations;
++using Microsoft.EntityFrameworkCore.Storage.ValueConversion;
++
++#nullable disable
++
++namespace FlemanApi.Migrations
++{
++    [DbContext(typeof(FlemanDbContext))]
++    [Migration("20261010083000_AddMaintenanceSchedules")]
++    partial class AddMaintenanceSchedules
++    {
++        /// <inheritdoc />
++        protected override void BuildTargetModel(ModelBuilder modelBuilder)
++        {
++#pragma warning disable 612, 618
++            modelBuilder
++                .HasAnnotation("ProductVersion", "8.0.10")
++                .HasAnnotation("Relational:MaxIdentifierLength", 64);
++
++            MySqlModelBuilderExtensions.AutoIncrementColumns(modelBuilder);
++
++            modelBuilder.Entity("FlemanApi.Models.Addon", b =>
++                {
++                    b.Property<long>("AddonId")
++                        .ValueGeneratedOnAdd()
++                        .HasColumnType("bigint");
++
++                    MySqlPropertyBuilderExtensions.UseMySqlIdentityColumn(b.Property<long>("AddonId"));
++
++                    b.Property<string>("AddonName")
++                        .IsRequired()
++                        .HasMaxLength(100)
++                        .HasColumnType("varchar(100)");
++
++                    b.Property<double>("DailyRate")
++                        .HasColumnType("double");
++
++                    b.Property<string>("Description")
++                        .HasMaxLength(500)
++                        .HasColumnType("varchar(500)");
++
++                    b.Property<DateOnly?>("RateValidFrom")
++                        .HasColumnType("date");
++
++                    b.Property<DateOnly?>("RateValidTo")
++                        .HasColumnType("date");
++
++                    b.HasKey("AddonId");
++
++                    b.HasIndex("AddonName")
++                        .IsUnique();
++
++                    b.ToTable("addons");
++                });
++
++            modelBuilder.Entity("FlemanApi.Models.Airport", b =>
++                {
++                    b.Property<long>("AirportId")
++                        .ValueGeneratedOnAdd()
++                        .HasColumnType("bigint");
++
++                    MySqlPropertyBuilderExtensions.UseMySqlIdentityColumn(b.Property<long>("AirportId"));
++
++                    b.Property<string>("AirportCode")
++                        .IsRequired()
++                        .HasMaxLength(10)
++                        .HasColumnType("varchar(10)");
++
++                    b.Property<string>("AirportName")
++                        .IsRequired()
++                        .HasMaxLength(150)
++                        .HasColumnType("varchar(150)");
++
++                    b.Property<long>("CityId")
++                        .HasColumnType("bigint");
++
++                    b.Property<long>("HubId")
++                        .HasColumnType("bigint");
++
++                    b.Property<long>("StateId")
++                        .HasColumnType("bigint");
++
++                    b.HasKey("AirportId");
++
++                    b.HasIndex("AirportCode")
++                        .IsUnique();
++
++                    b.ToTable("airports");
++                });
++
++            modelBuilder.Entity("FlemanApi.Models.BookingDetail", b =>
++                {
++                    b.Property<long>("BookingDetailId")
++                        .ValueGeneratedOnAdd()
++                        .HasColumnType("bigint");
++
++                    MySqlPropertyBuilderExtensions.UseMySqlIdentityColumn(b.Property<long>("BookingDetailId"));
++
++                    b.Property<long>("AddonId")
++                        .HasColumnType("bigint");
++
++                    b.Property<double?>("AddonRate")
++                        .HasColumnType("double");
++
++                    b.Property<long>("BookingId")
++                        .HasColumnType("bigint");
++
++                    b.Property<int?>("Quantity")
++                        .HasColumnType("int");
++
++                    b.Property<double?>("Subtotal")
++                        .HasColumnType("double");
++
++                    b.HasKey("BookingDetailId");
++
++                    b.ToTable("booking_details");
++                });
++
++            modelBuilder.Entity("FlemanApi.Models.BookingHeader", b =>
++                {
++                    b.Property<long>("BookingId")
++                        .ValueGeneratedOnAdd()
++                        .HasColumnType("bigint");
++
++                    MySqlPropertyBuilderExtensions.UseMySqlIdentityColumn(b.Property<long>("BookingId"));
++
++                    b.Property<DateTime?>("ActualHandoverDatetime")
++                        .HasColumnType("datetime(6)");
++
++                    b.Property<DateTime?>("ActualReturnDatetime")
++                        .HasColumnType("datetime(6)");
++
++                    b.Property<DateTime>("BookingDate")
++                        .HasColumnType("datetime(6)");
++
++                    b.Property<string>("BookingStatus")
++                        .HasColumnType("longtext");
++
++                    b.Property<long?>("CarId")
++                        .HasColumnType("bigint");
++
++                    b.Property<long>("CarTypeId")
++                        .HasColumnType("bigint");
++
++                    b.Property<string>("ConfirmationNo")
++                        .IsRequired()
++                        .HasColumnType("varchar(255)");
++
++                    b.Property<long>("CustomerId")
++                        .HasColumnType("bigint");
++
++                    b.Property<long>("DropHubId")
++                        .HasColumnType("bigint");
++
++                    b.Property<double?>("EstimatedAmount")
++                        .HasColumnType("double");
++
++                    b.Property<int?>("HandoverFuelLevel")
++                        .HasColumnType("int");
++
++                    b.Property<DateTime>("PickupDatetime")
++                        .HasColumnType("datetime(6)");
++
++                    b.Property<long>("PickupHubId")
++                        .HasColumnType("bigint");
++
++                    b.Property<string>("Remarks")
++                        .HasMaxLength(255)
++                        .HasColumnType("varchar(255)");
++
++                    b.Property<DateTime>("ReturnDatetime")
++                        .HasColumnType("datetime(6)");
++
++                    b.HasKey("BookingId");
++
++                    b.HasIndex("ConfirmationNo")
++                        .IsUnique();
++
++                    b.ToTable("booking_headers");
++                });
++
++            modelBuilder.Entity("FlemanApi.Models.Car", b =>
++                {
++                    b.Property<long>("CarId")
++                        .ValueGeneratedOnAdd()
++                        .HasColumnType("bigint");
++
++                    MySqlPropertyBuilderExtensions.UseMySqlIdentityColumn(b.Property<long>("CarId"));
++
++                    b.Property<string>("Brand")
++                        .HasMaxLength(50)
++                        .HasColumnType("varchar(50)");
++
++                    b.Property<long>("CarTypeId")
++                        .HasColumnType("bigint");
++
++                    b.Property<string>("Color")
++                        .HasMaxLength(30)
++                        .HasColumnType("varchar(30)");
++
++                    b.Property<int?>("FuelLevel")
++                        .HasColumnType("int");
++
++                    b.Property<string>("FuelType")
++                        .HasColumnType("longtext");
++
++                    b.Property<long>("HubId")
++                        .HasColumnType("bigint");
++
++                    b.Property<bool>("IsAvailable")
++                        .HasColumnType("tinyint(1)");
++
++                    b.Property<int?>("ManufactureYear")
++                        .HasColumnType("int");
++
++                    b.Property<double?>("Mileage")
++                        .HasColumnType("double");
++
++                    b.Property<string>("Model")
++                        .HasMaxLength(50)
++                        .HasColumnType("varchar(50)");
++
++                    b.Property<int?>("Odometer")
++                        .HasColumnType("int");
++
++                    b.Property<int?>("SeatingCapacity")
++                        .HasColumnType("int");
++
++                    b.Property<string>("Status")
++                        .HasColumnType("longtext");
++
++                    b.Property<string>("VehicleNumber")
++                        .IsRequired()
++                        .HasMaxLength(20)
++                        .HasColumnType("varchar(20)");
++
++                    b.HasKey("CarId");
++
++                    b.HasIndex("VehicleNumber")
++                        .IsUnique();
++
++                    b.ToTable("cars");
++                });
++
++            modelBuilder.Entity("FlemanApi.Models.CarType", b =>
++                {
++                    b.Property<long>("CarTypeId")
++                        .ValueGeneratedOnAdd()
++                        .HasColumnType("bigint");
++
++                    MySqlPropertyBuilderExtensions.UseMySqlIdentityColumn(b.Property<long>("CarTypeId"));
++
++                    b.Property<string>("CarTypeName")
++                        .IsRequired()
++                        .HasMaxLength(100)
++                        .HasColumnType("varchar(100)");
++
++                    b.Property<double>("DailyRate")
++                        .HasColumnType("double");
++
++                    b.Property<string>("ImagePath")
++                        .HasColumnType("longtext");
++
++                    b.Property<double?>("MonthlyRate")
++                        .HasColumnType("double");
++
++                    b.Property<DateOnly?>("RateValidFrom")
++                        .HasColumnType("date");
++
++                    b.Property<DateOnly?>("RateValidTo")
++                        .HasColumnType("date");
++
++                    b.Property<double?>("WeeklyRate")
++                        .HasColumnType("double");
++
++                    b.HasKey("CarTypeId");
++
++                    b.HasIndex("CarTypeName")
++                        .IsUnique();
++
++                    b.ToTable("car_types");
++                });
++
++            modelBuilder.Entity("FlemanApi.Models.City", b =>
++                {
++                    b.Property<long>("CityId")
++                        .ValueGeneratedOnAdd()
++                        .HasColumnType("bigint");
++
++                    MySqlPropertyBuilderExtensions.UseMySqlIdentityColumn(b.Property<long>("CityId"));
++
++                    b.Property<string>("CityName")
++                        .IsRequired()
++                        .HasMaxLength(100)
++                        .HasColumnType("varchar(100)");
++
++                    b.Property<long>("StateId")
++                        .HasColumnType("bigint");
++
++                    b.HasKey("CityId");
++
++                    b.ToTable("cities");
++                });
++
++            modelBuilder.Entity("FlemanApi.Models.Customer", b =>
++                {
++                    b.Property<long>("CustomerId")
++                        .ValueGeneratedOnAdd()
++                        .HasColumnType("bigint");
++
++                    MySqlPropertyBuilderExtensions.UseMySqlIdentityColumn(b.Property<long>("CustomerId"));
++
++                    b.Property<string>("Address1")
++                        .HasMaxLength(255)
++                        .HasColumnType("varchar(255)");
++
++                    b.Property<string>("Address2")
++                        .HasMaxLength(255)
++                        .HasColumnType("varchar(255)");
++
++                    b.Property<long?>("CityId")
++                        .HasColumnType("bigint");
++
++                    b.Property<DateOnly?>("DateOfBirth")
++                        .HasColumnType("date");
++
++                    b.Property<string>("DrivingLicenseNo")
++                        .HasMaxLength(30)
++                        .HasColumnType("varchar(30)");
++
++                    b.Property<string>("Email")
++                        .IsRequired()
++                        .HasMaxLength(100)
++                        .HasColumnType("varchar(100)");
++
++                    b.Property<bool?>("EmailVerified")
++                        .HasColumnType("tinyint(1)");
++
++                    b.Property<string>("FullName")
++                        .IsRequired()
++                        .HasMaxLength(100)
++                        .HasColumnType("varchar(100)");
++
++                    b.Property<string>("GovtIdDocument")
++                        .HasColumnType("longtext")
++                        .HasColumnName("govt_id_document");
++
++                    b.Property<string>("GovtIdDocumentName")
++                        .HasMaxLength(255)
++                        .HasColumnType("varchar(255)")
++                        .HasColumnName("govt_id_document_name");
++
++                    b.Property<string>("GovtIdDocumentType")
++                        .HasMaxLength(30)
++                        .HasColumnType("varchar(30)")
++                        .HasColumnName("govt_id_document_type");
++
++                    b.Property<string>("PassportNo")
++                        .HasMaxLength(30)
++                        .HasColumnType("varchar(30)");
++
++                    b.Property<string>("PasswordHash")
++                        .HasColumnType("longtext")
++                        .HasColumnName("password_hash");
++
++                    b.Property<string>("Phone")
++                        .HasMaxLength(15)
++                        .HasColumnType("varchar(15)");
++
++                    b.Property<string>("Pincode")
++                        .HasMaxLength(10)
++                        .HasColumnType("varchar(10)");
++
++                    b.Property<string>("Provider")
++                        .HasMaxLength(20)
++                        .HasColumnType("varchar(20)");
++
++                    b.Property<string>("ProviderId")
++                        .HasMaxLength(100)
++                        .HasColumnType("varchar(100)");
++
++                    b.Property<long?>("StateId")
++                        .HasColumnType("bigint");
++
++                    b.Property<string>("Status")
++                        .HasColumnType("longtext");
++
++                    b.HasKey("CustomerId");
++
++                    b.HasIndex("DrivingLicenseNo")
++                        .IsUnique();
++
++                    b.HasIndex("Email")
++                        .IsUnique();
++
++                    b.HasIndex("Phone")
++                        .IsUnique();
++
++                    b.ToTable("customers");
++                });
++
++            modelBuilder.Entity("FlemanApi.Models.Hub", b =>
++                {
++                    b.Property<long>("HubId")
++                        .ValueGeneratedOnAdd()
++                        .HasColumnType("bigint");
++
++                    MySqlPropertyBuilderExtensions.UseMySqlIdentityColumn(b.Property<long>("HubId"));
++
++                    b.Property<string>("Address")
++                        .HasMaxLength(255)
++                        .HasColumnType("varchar(255)");
++
++                    b.Property<long>("CityId")
++                        .HasColumnType("bigint");
++
++                    b.Property<string>("ContactNo")
++                        .IsRequired()
++                        .HasMaxLength(20)
++                        .HasColumnType("varchar(20)");
++
++                    b.Property<string>("Email")
++                        .HasColumnType("longtext");
++
++                    b.Property<string>("HubName")
++                        .IsRequired()
++                        .HasMaxLength(100)
++                        .HasColumnType("varchar(100)");
++
++                    b.Property<string>("Pincode")
++                        .IsRequired()
++                        .HasMaxLength(10)
++                        .HasColumnType("varchar(10)");
++
++                    b.Property<long>("StateId")
++                        .HasColumnType("bigint");
++
++                    b.HasKey("HubId");
++
++                    b.ToTable("hubs");
++                });
++
++            modelBuilder.Entity("FlemanApi.Models.InvoiceDetail", b =>
++                {
++                    b.Property<long>("InvoiceDetailId")
++                        .ValueGeneratedOnAdd()
++                        .HasColumnType("bigint");
++
++                    MySqlPropertyBuilderExtensions.UseMySqlIdentityColumn(b.Property<long>("InvoiceDetailId"));
++
++                    b.Property<string>("AddonName")
++                        .HasColumnType("longtext");
++
++                    b.Property<double?>("AddonRate")
++                        .HasColumnType("double");
++
++                    b.Property<long>("InvoiceId")
++                        .HasColumnType("bigint");
++
++                    b.Property<int?>("Quantity")
++                        .HasColumnType("int");
++
++                    b.Property<double?>("Subtotal")
++                        .HasColumnType("double");
++
++                    b.HasKey("InvoiceDetailId");
++
++                    b.ToTable("invoice_details");
++                });
++
++            modelBuilder.Entity("FlemanApi.Models.InvoiceHeader", b =>
++                {
++                    b.Property<long>("InvoiceId")
++                        .ValueGeneratedOnAdd()
++                        .HasColumnType("bigint");
++
++                    MySqlPropertyBuilderExtensions.UseMySqlIdentityColumn(b.Property<long>("InvoiceId"));
++
++                    b.Property<double?>("AddonAmount")
++                        .HasColumnType("double");
++
++                    b.Property<long>("BookingId")
++                        .HasColumnType("bigint");
++
++                    b.Property<string>("CustomerName")
++                        .HasColumnType("longtext");
++
++                    b.Property<string>("DamageNotes")
++                        .HasMaxLength(1000)
++                        .HasColumnType("varchar(1000)");
++
++                    b.Property<int?>("Days")
++                        .HasColumnType("int");
++
++                    b.Property<long?>("DropHub")
++                        .HasColumnType("bigint");
++
++                    b.Property<string>("Email")
++                        .HasColumnType("longtext");
++
++                    b.Property<double?>("ExtraChargeAmount")
++                        .HasColumnType("double");
++
++                    b.Property<int?>("ExtraMiles")
++                        .HasColumnType("int");
++
++                    b.Property<double?>("FuelCharge")
++                        .HasColumnType("double");
++
++                    b.Property<DateTime?>("HandoverDatetime")
++                        .HasColumnType("datetime(6)");
++
++                    b.Property<int?>("HandoverFuelLevel")
++                        .HasColumnType("int");
++
++                    b.Property<DateTime>("InvoiceDate")
++                        .HasColumnType("datetime(6)");
++
++                    b.Property<string>("PaymentReference")
++                        .HasColumnType("longtext");
++
++                    b.Property<string>("PaymentStatus")
++                        .HasColumnType("longtext");
++
++                    b.Property<string>("PaymentType")
++                        .HasColumnType("longtext");
++
++                    b.Property<string>("Phone")
++                        .HasColumnType("longtext");
++
++                    b.Property<long?>("PickupHub")
++                        .HasColumnType("bigint");
++
++                    b.Property<double?>("RentalAmount")
++                        .HasColumnType("double");
++
++                    b.Property<DateTime?>("ReturnDatetime")
++                        .HasColumnType("datetime(6)");
++
++                    b.Property<int?>("ReturnFuelLevel")
++                        .HasColumnType("int");
++
++                    b.Property<double?>("TotalAmount")
++                        .HasColumnType("double");
++
++                    b.Property<string>("VehicleNumber")
++                        .HasColumnType("longtext");
++
++                    b.HasKey("InvoiceId");
++
++                    b.ToTable("invoice_headers");
++                });
++
++            modelBuilder.Entity("FlemanApi.Models.MaintenanceSchedule", b =>
++                {
++                    b.Property<long>("MaintenanceScheduleId")
++                        .ValueGeneratedOnAdd()
++                        .HasColumnType("bigint");
++
++                    MySqlPropertyBuilderExtensions.UseMySqlIdentityColumn(b.Property<long>("MaintenanceScheduleId"));
++
++                    b.Property<long>("CarId")
++                        .HasColumnType("bigint");
++
++                    b.Property<DateTime?>("CompletedAt")
++                        .HasColumnType("datetime(6)");
++
++                    b.Property<string>("MaintenanceType")
++                        .IsRequired()
++                        .HasMaxLength(20)
++                        .HasColumnType("varchar(20)");
++
++                    b.Property<string>("Notes")
++                        .HasMaxLength(500)
++                        .HasColumnType("varchar(500)");
++
++                    b.Property<DateTime>("ScheduledDate")
++                        .HasColumnType("date");
++
++                    b.Property<DateTime?>("StartedAt")
++                        .HasColumnType("datetime(6)");
++
++                    b.Property<string>("Status")
++                        .IsRequired()
++                        .HasMaxLength(20)
++                        .HasColumnType("varchar(20)");
++
++                    b.HasKey("MaintenanceScheduleId");
++
++                    b.HasIndex("CarId");
++
++                    b.HasIndex("Status", "ScheduledDate");
++
++                    b.ToTable("maintenance_schedules");
++                });
++
++            modelBuilder.Entity("FlemanApi.Models.State", b =>
++                {
++                    b.Property<long>("StateId")
++                        .ValueGeneratedOnAdd()
++                        .HasColumnType("bigint");
++
++                    MySqlPropertyBuilderExtensions.UseMySqlIdentityColumn(b.Property<long>("StateId"));
++
++                    b.Property<string>("StateName")
++                        .IsRequired()
++                        .HasMaxLength(100)
++                        .HasColumnType("varchar(100)");
++
++                    b.HasKey("StateId");
++
++                    b.HasIndex("StateName")
++                        .IsUnique();
++
++                    b.ToTable("states");
++                });
++#pragma warning restore 612, 618
++        }
++    }
++}
+diff --git a/WanderCar_DotNet/src/FlemanApi/Migrations/20261010083000_AddMaintenanceSchedules.cs b/WanderCar_DotNet/src/FlemanApi/Migrations/20261010083000_AddMaintenanceSchedules.cs
+new file mode 100644
+index 0000000..050d9fb
+--- /dev/null
++++ b/WanderCar_DotNet/src/FlemanApi/Migrations/20261010083000_AddMaintenanceSchedules.cs
+@@ -0,0 +1,56 @@
++﻿using System;
++using Microsoft.EntityFrameworkCore.Metadata;
++using Microsoft.EntityFrameworkCore.Migrations;
++
++#nullable disable
++
++namespace FlemanApi.Migrations
++{
++    /// <inheritdoc />
++    public partial class AddMaintenanceSchedules : Migration
++    {
++        /// <inheritdoc />
++        protected override void Up(MigrationBuilder migrationBuilder)
++        {
++            migrationBuilder.CreateTable(
++                name: "maintenance_schedules",
++                columns: table => new
++                {
++                    MaintenanceScheduleId = table.Column<long>(type: "bigint", nullable: false)
++                        .Annotation("MySql:ValueGenerationStrategy", MySqlValueGenerationStrategy.IdentityColumn),
++                    CarId = table.Column<long>(type: "bigint", nullable: false),
++                    MaintenanceType = table.Column<string>(type: "varchar(20)", maxLength: 20, nullable: false)
++                        .Annotation("MySql:CharSet", "utf8mb4"),
++                    ScheduledDate = table.Column<DateTime>(type: "date", nullable: false),
++                    Status = table.Column<string>(type: "varchar(20)", maxLength: 20, nullable: false)
++                        .Annotation("MySql:CharSet", "utf8mb4"),
++                    StartedAt = table.Column<DateTime>(type: "datetime(6)", nullable: true),
++                    CompletedAt = table.Column<DateTime>(type: "datetime(6)", nullable: true),
++                    Notes = table.Column<string>(type: "varchar(500)", maxLength: 500, nullable: true)
++                        .Annotation("MySql:CharSet", "utf8mb4")
++                },
++                constraints: table =>
++                {
++                    table.PrimaryKey("PK_maintenance_schedules", x => x.MaintenanceScheduleId);
++                })
++                .Annotation("MySql:CharSet", "utf8mb4");
++
++            migrationBuilder.CreateIndex(
++                name: "IX_maintenance_schedules_CarId",
++                table: "maintenance_schedules",
++                column: "CarId");
++
++            migrationBuilder.CreateIndex(
++                name: "IX_maintenance_schedules_Status_ScheduledDate",
++                table: "maintenance_schedules",
++                columns: new[] { "Status", "ScheduledDate" });
++        }
++
++        /// <inheritdoc />
++        protected override void Down(MigrationBuilder migrationBuilder)
++        {
++            migrationBuilder.DropTable(
++                name: "maintenance_schedules");
++        }
++    }
++}
+diff --git a/WanderCar_DotNet/src/FlemanApi/Migrations/FlemanDbContextModelSnapshot.cs b/WanderCar_DotNet/src/FlemanApi/Migrations/FlemanDbContextModelSnapshot.cs
+index 7ee81f1..fc372b3 100644
+--- a/WanderCar_DotNet/src/FlemanApi/Migrations/FlemanDbContextModelSnapshot.cs
++++ b/WanderCar_DotNet/src/FlemanApi/Migrations/FlemanDbContextModelSnapshot.cs
+@@ -554,6 +554,49 @@ namespace FlemanApi.Migrations
+                     b.ToTable("invoice_headers");
+                 });
+ 
++            modelBuilder.Entity("FlemanApi.Models.MaintenanceSchedule", b =>
++                {
++                    b.Property<long>("MaintenanceScheduleId")
++                        .ValueGeneratedOnAdd()
++                        .HasColumnType("bigint");
++
++                    MySqlPropertyBuilderExtensions.UseMySqlIdentityColumn(b.Property<long>("MaintenanceScheduleId"));
++
++                    b.Property<long>("CarId")
++                        .HasColumnType("bigint");
++
++                    b.Property<DateTime?>("CompletedAt")
++                        .HasColumnType("datetime(6)");
++
++                    b.Property<string>("MaintenanceType")
++                        .IsRequired()
++                        .HasMaxLength(20)
++                        .HasColumnType("varchar(20)");
++
++                    b.Property<string>("Notes")
++                        .HasMaxLength(500)
++                        .HasColumnType("varchar(500)");
++
++                    b.Property<DateTime>("ScheduledDate")
++                        .HasColumnType("date");
++
++                    b.Property<DateTime?>("StartedAt")
++                        .HasColumnType("datetime(6)");
++
++                    b.Property<string>("Status")
++                        .IsRequired()
++                        .HasMaxLength(20)
++                        .HasColumnType("varchar(20)");
++
++                    b.HasKey("MaintenanceScheduleId");
++
++                    b.HasIndex("CarId");
++
++                    b.HasIndex("Status", "ScheduledDate");
++
++                    b.ToTable("maintenance_schedules");
++                });
++
+             modelBuilder.Entity("FlemanApi.Models.State", b =>
+                 {
+                     b.Property<long>("StateId")
+diff --git a/WanderCar_DotNet/src/FlemanApi/Models/MaintenanceSchedule.cs b/WanderCar_DotNet/src/FlemanApi/Models/MaintenanceSchedule.cs
+new file mode 100644
+index 0000000..022a660
+--- /dev/null
++++ b/WanderCar_DotNet/src/FlemanApi/Models/MaintenanceSchedule.cs
+@@ -0,0 +1,33 @@
++using System.ComponentModel.DataAnnotations;
++using System.ComponentModel.DataAnnotations.Schema;
++
++namespace FlemanApi.Models;
++
++public enum MaintenanceType { SERVICE, INSPECTION, REPAIR }
++public enum MaintenanceStatus { SCHEDULED, IN_PROGRESS, COMPLETED, CANCELLED }
++
++// CH03 - one planned maintenance job for one car. Status is the persisted
++// state of the State pattern in Service/Maintenance.
++[Table("maintenance_schedules")]
++public class MaintenanceSchedule
++{
++    [Key]
++    public long MaintenanceScheduleId { get; set; }
++
++    // A plain id, like BookingHeader.CarId - no navigation property.
++    [Required]
++    public long CarId { get; set; }
++
++    public MaintenanceType MaintenanceType { get; set; }
++
++    [Column(TypeName = "date")]
++    public DateTime ScheduledDate { get; set; }
++
++    public MaintenanceStatus Status { get; set; } = MaintenanceStatus.SCHEDULED;
++
++    public DateTime? StartedAt { get; set; }
++    public DateTime? CompletedAt { get; set; }
++
++    [MaxLength(500)]
++    public string? Notes { get; set; }
++}
+diff --git a/WanderCar_DotNet/src/FlemanApi/Program.cs b/WanderCar_DotNet/src/FlemanApi/Program.cs
+index ec2283e..2ba8f5a 100644
+--- a/WanderCar_DotNet/src/FlemanApi/Program.cs
++++ b/WanderCar_DotNet/src/FlemanApi/Program.cs
+@@ -208,6 +208,11 @@ builder.Services.AddHttpClient<IJavaMicroserviceClient, JavaMicroserviceClient>(
+     client.Timeout = TimeSpan.FromSeconds(10);
+ });
+ 
++// ---- CH03: fleet-maintenance scheduling (State) -------------------------
++// New code takes "now" from an injected clock instead of DateTime.Now.
++builder.Services.AddSingleton(TimeProvider.System);
++builder.Services.AddScoped<IMaintenanceService, MaintenanceService>();
++
+ var app = builder.Build();
+ 
+ // ---- HTTP pipeline ------------------------------------------------------
+diff --git a/WanderCar_DotNet/src/FlemanApi/Service/IMaintenanceService.cs b/WanderCar_DotNet/src/FlemanApi/Service/IMaintenanceService.cs
+new file mode 100644
+index 0000000..8f41aa2
+--- /dev/null
++++ b/WanderCar_DotNet/src/FlemanApi/Service/IMaintenanceService.cs
+@@ -0,0 +1,14 @@
++using FlemanApi.DTO;
++
++namespace FlemanApi.Service;
++
++public interface IMaintenanceService
++{
++    Task<MaintenanceScheduleDTO> ScheduleAsync(ScheduleMaintenanceRequest request);
++    Task<MaintenanceScheduleDTO> GetByIdAsync(long id);
++    Task<IReadOnlyList<MaintenanceScheduleDTO>> GetDueAsync();
++    Task<IReadOnlyList<MaintenanceScheduleDTO>> GetOverdueAsync();
++    Task<MaintenanceScheduleDTO> StartAsync(long id, MaintenanceTransitionRequest request);
++    Task<MaintenanceScheduleDTO> CompleteAsync(long id, MaintenanceTransitionRequest request);
++    Task<MaintenanceScheduleDTO> CancelAsync(long id, MaintenanceTransitionRequest request);
++}
+diff --git a/WanderCar_DotNet/src/FlemanApi/Service/Maintenance/CancelledState.cs b/WanderCar_DotNet/src/FlemanApi/Service/Maintenance/CancelledState.cs
+new file mode 100644
+index 0000000..ee12ad2
+--- /dev/null
++++ b/WanderCar_DotNet/src/FlemanApi/Service/Maintenance/CancelledState.cs
+@@ -0,0 +1,13 @@
++using FlemanApi.Models;
++
++namespace FlemanApi.Service.Maintenance;
++
++// Terminal: overrides nothing, so start / complete / cancel all return 409.
++public sealed class CancelledState : MaintenanceStateBase
++{
++    public static readonly CancelledState Instance = new();
++
++    private CancelledState() { }
++
++    public override MaintenanceStatus Status => MaintenanceStatus.CANCELLED;
++}
+diff --git a/WanderCar_DotNet/src/FlemanApi/Service/Maintenance/CompletedState.cs b/WanderCar_DotNet/src/FlemanApi/Service/Maintenance/CompletedState.cs
+new file mode 100644
+index 0000000..adf1505
+--- /dev/null
++++ b/WanderCar_DotNet/src/FlemanApi/Service/Maintenance/CompletedState.cs
+@@ -0,0 +1,13 @@
++using FlemanApi.Models;
++
++namespace FlemanApi.Service.Maintenance;
++
++// Terminal: overrides nothing, so start / complete / cancel all return 409.
++public sealed class CompletedState : MaintenanceStateBase
++{
++    public static readonly CompletedState Instance = new();
++
++    private CompletedState() { }
++
++    public override MaintenanceStatus Status => MaintenanceStatus.COMPLETED;
++}
+diff --git a/WanderCar_DotNet/src/FlemanApi/Service/Maintenance/IMaintenanceState.cs b/WanderCar_DotNet/src/FlemanApi/Service/Maintenance/IMaintenanceState.cs
+new file mode 100644
+index 0000000..5a9d4de
+--- /dev/null
++++ b/WanderCar_DotNet/src/FlemanApi/Service/Maintenance/IMaintenanceState.cs
+@@ -0,0 +1,14 @@
++using FlemanApi.Models;
++
++namespace FlemanApi.Service.Maintenance;
++
++// State role of the State pattern: one object per MaintenanceStatus. Each
++// operation either performs the transition on the context or refuses it.
++public interface IMaintenanceState
++{
++    MaintenanceStatus Status { get; }
++
++    void Start(MaintenanceContext context);
++    void Complete(MaintenanceContext context);
++    void Cancel(MaintenanceContext context);
++}
+diff --git a/WanderCar_DotNet/src/FlemanApi/Service/Maintenance/InProgressState.cs b/WanderCar_DotNet/src/FlemanApi/Service/Maintenance/InProgressState.cs
+new file mode 100644
+index 0000000..68cd692
+--- /dev/null
++++ b/WanderCar_DotNet/src/FlemanApi/Service/Maintenance/InProgressState.cs
+@@ -0,0 +1,25 @@
++using FlemanApi.Models;
++
++namespace FlemanApi.Service.Maintenance;
++
++public sealed class InProgressState : MaintenanceStateBase
++{
++    public static readonly InProgressState Instance = new();
++
++    private InProgressState() { }
++
++    public override MaintenanceStatus Status => MaintenanceStatus.IN_PROGRESS;
++
++    public override void Complete(MaintenanceContext context)
++    {
++        ReleaseCar(context);
++        context.Schedule.CompletedAt = context.Now;
++        context.TransitionTo(CompletedState.Instance);
++    }
++
++    public override void Cancel(MaintenanceContext context)
++    {
++        ReleaseCar(context);
++        context.TransitionTo(CancelledState.Instance);
++    }
++}
+diff --git a/WanderCar_DotNet/src/FlemanApi/Service/Maintenance/MaintenanceContext.cs b/WanderCar_DotNet/src/FlemanApi/Service/Maintenance/MaintenanceContext.cs
+new file mode 100644
+index 0000000..ca301a8
+--- /dev/null
++++ b/WanderCar_DotNet/src/FlemanApi/Service/Maintenance/MaintenanceContext.cs
+@@ -0,0 +1,42 @@
++using FlemanApi.Models;
++
++namespace FlemanApi.Service.Maintenance;
++
++// Context role of the State pattern: holds the schedule, the car it is for
++// and the current state object, and forwards every operation to that state.
++public sealed class MaintenanceContext
++{
++    private static readonly IReadOnlyDictionary<MaintenanceStatus, IMaintenanceState> States =
++        new Dictionary<MaintenanceStatus, IMaintenanceState>
++        {
++            [MaintenanceStatus.SCHEDULED] = ScheduledState.Instance,
++            [MaintenanceStatus.IN_PROGRESS] = InProgressState.Instance,
++            [MaintenanceStatus.COMPLETED] = CompletedState.Instance,
++            [MaintenanceStatus.CANCELLED] = CancelledState.Instance,
++        };
++
++    public MaintenanceSchedule Schedule { get; }
++    public Car Car { get; }
++    public DateTime Now { get; }
++    public IMaintenanceState State { get; private set; }
++
++    public MaintenanceContext(MaintenanceSchedule schedule, Car car, DateTime now)
++    {
++        Schedule = schedule;
++        Car = car;
++        Now = now;
++        State = States[schedule.Status];
++    }
++
++    public void Start() => State.Start(this);
++    public void Complete() => State.Complete(this);
++    public void Cancel() => State.Cancel(this);
++
++    // Called by the states only: keeps the state object and the persisted
++    // Schedule.Status in step.
++    public void TransitionTo(IMaintenanceState next)
++    {
++        State = next;
++        Schedule.Status = next.Status;
++    }
++}
+diff --git a/WanderCar_DotNet/src/FlemanApi/Service/Maintenance/MaintenanceStateBase.cs b/WanderCar_DotNet/src/FlemanApi/Service/Maintenance/MaintenanceStateBase.cs
+new file mode 100644
+index 0000000..03a6580
+--- /dev/null
++++ b/WanderCar_DotNet/src/FlemanApi/Service/Maintenance/MaintenanceStateBase.cs
+@@ -0,0 +1,26 @@
++using System.Net;
++using FlemanApi.Exceptions;
++using FlemanApi.Models;
++
++namespace FlemanApi.Service.Maintenance;
++
++// Default behaviour: every operation is illegal (409) until a concrete
++// state overrides it, so a state only lists the transitions it allows.
++public abstract class MaintenanceStateBase : IMaintenanceState
++{
++    public abstract MaintenanceStatus Status { get; }
++
++    public virtual void Start(MaintenanceContext context) => throw Illegal("start");
++    public virtual void Complete(MaintenanceContext context) => throw Illegal("complete");
++    public virtual void Cancel(MaintenanceContext context) => throw Illegal("cancel");
++
++    protected ApiException Illegal(string operation) =>
++        new($"Cannot {operation} maintenance that is {Status}", HttpStatusCode.Conflict);
++
++    // Shared by the two transitions that hand the car back to the fleet.
++    protected static void ReleaseCar(MaintenanceContext context)
++    {
++        context.Car.Status = CarStatus.AVAILABLE;
++        context.Car.IsAvailable = true;
++    }
++}
+diff --git a/WanderCar_DotNet/src/FlemanApi/Service/Maintenance/ScheduledState.cs b/WanderCar_DotNet/src/FlemanApi/Service/Maintenance/ScheduledState.cs
+new file mode 100644
+index 0000000..fba5e59
+--- /dev/null
++++ b/WanderCar_DotNet/src/FlemanApi/Service/Maintenance/ScheduledState.cs
+@@ -0,0 +1,34 @@
++using System.Net;
++using FlemanApi.Exceptions;
++using FlemanApi.Models;
++
++namespace FlemanApi.Service.Maintenance;
++
++public sealed class ScheduledState : MaintenanceStateBase
++{
++    public static readonly ScheduledState Instance = new();
++
++    private ScheduledState() { }
++
++    public override MaintenanceStatus Status => MaintenanceStatus.SCHEDULED;
++
++    // Work can only begin on a car that is physically free right now.
++    public override void Start(MaintenanceContext context)
++    {
++        if (context.Car.Status != CarStatus.AVAILABLE)
++        {
++            throw new ApiException(
++                $"Cannot start maintenance: car {context.Car.CarId} is not available",
++                HttpStatusCode.Conflict);
++        }
++
++        context.Car.Status = CarStatus.UNDER_MAINTENANCE;
++        context.Car.IsAvailable = false;
++        context.Schedule.StartedAt = context.Now;
++        context.TransitionTo(InProgressState.Instance);
++    }
++
++    // Nothing was done to the car yet, so it is left alone.
++    public override void Cancel(MaintenanceContext context) =>
++        context.TransitionTo(CancelledState.Instance);
++}
+diff --git a/WanderCar_DotNet/src/FlemanApi/Service/MaintenanceService.cs b/WanderCar_DotNet/src/FlemanApi/Service/MaintenanceService.cs
+new file mode 100644
+index 0000000..7f045fe
+--- /dev/null
++++ b/WanderCar_DotNet/src/FlemanApi/Service/MaintenanceService.cs
+@@ -0,0 +1,139 @@
++using System.Net;
++using FlemanApi.DTO;
++using FlemanApi.Exceptions;
++using FlemanApi.Models;
++using FlemanApi.Repository;
++using FlemanApi.Service.Maintenance;
++using FlemanApi.Validators;
++
++namespace FlemanApi.Service;
++
++// CH03 - fleet-maintenance scheduling. Which transition is legal, and what
++// it does to the car, is decided by the state objects in
++// Service/Maintenance; this class never branches on Status.
++public class MaintenanceService : IMaintenanceService
++{
++    private const int MaxNotesLength = ScheduleMaintenanceRequestValidator.MaxNotesLength;
++
++    private readonly IGenericRepository<MaintenanceSchedule, long> _schedules;
++    private readonly IGenericRepository<Car, long> _cars;
++    private readonly TimeProvider _timeProvider;
++
++    public MaintenanceService(
++        IGenericRepository<MaintenanceSchedule, long> schedules,
++        IGenericRepository<Car, long> cars,
++        TimeProvider timeProvider)
++    {
++        _schedules = schedules;
++        _cars = cars;
++        _timeProvider = timeProvider;
++    }
++
++    // Server-local wall clock, like the rest of the application.
++    private DateTime Now => _timeProvider.GetLocalNow().DateTime;
++    private DateTime Today => Now.Date;
++
++    public async Task<MaintenanceScheduleDTO> ScheduleAsync(ScheduleMaintenanceRequest request)
++    {
++        if (request.CarId is null)
++            throw new ApiException("carId is required", HttpStatusCode.BadRequest);
++        if (request.MaintenanceType is null)
++            throw new ApiException("maintenanceType is required", HttpStatusCode.BadRequest);
++        if (request.ScheduledDate is null)
++            throw new ApiException("scheduledDate is required", HttpStatusCode.BadRequest);
++
++        var car = await _cars.GetByIdAsync(request.CarId.Value)
++            ?? throw new ResourceNotFoundException($"Car not found: {request.CarId}");
++
++        // The column is a date, so the time part is dropped.
++        var scheduledDate = request.ScheduledDate.Value.Date;
++        if (scheduledDate < Today)
++            throw new ApiException("scheduledDate cannot be in the past", HttpStatusCode.BadRequest);
++
++        var schedule = new MaintenanceSchedule
++        {
++            CarId = car.CarId,
++            MaintenanceType = request.MaintenanceType.Value,
++            ScheduledDate = scheduledDate,
++            Status = MaintenanceStatus.SCHEDULED,
++            Notes = string.IsNullOrWhiteSpace(request.Notes) ? null : request.Notes.Trim(),
++        };
++
++        await _schedules.AddAsync(schedule);
++        await _schedules.SaveChangesAsync();
++        return ToDto(schedule);
++    }
++
++    public async Task<MaintenanceScheduleDTO> GetByIdAsync(long id) => ToDto(await FindScheduleAsync(id));
++
++    public async Task<IReadOnlyList<MaintenanceScheduleDTO>> GetDueAsync()
++    {
++        var today = Today;
++        var due = await _schedules.FindAsync(m =>
++            m.Status == MaintenanceStatus.SCHEDULED && m.ScheduledDate == today);
++        return due.OrderBy(m => m.MaintenanceScheduleId).Select(ToDto).ToList();
++    }
++
++    public async Task<IReadOnlyList<MaintenanceScheduleDTO>> GetOverdueAsync()
++    {
++        var today = Today;
++        var overdue = await _schedules.FindAsync(m =>
++            m.Status == MaintenanceStatus.SCHEDULED && m.ScheduledDate < today);
++        return overdue.OrderBy(m => m.ScheduledDate).ThenBy(m => m.MaintenanceScheduleId).Select(ToDto).ToList();
++    }
++
++    public Task<MaintenanceScheduleDTO> StartAsync(long id, MaintenanceTransitionRequest request) =>
++        TransitionAsync(id, "Start", request, context => context.Start());
++
++    public Task<MaintenanceScheduleDTO> CompleteAsync(long id, MaintenanceTransitionRequest request) =>
++        TransitionAsync(id, "Complete", request, context => context.Complete());
++
++    public Task<MaintenanceScheduleDTO> CancelAsync(long id, MaintenanceTransitionRequest request) =>
++        TransitionAsync(id, "Cancel", request, context => context.Cancel());
++
++    // Client of the State pattern: builds the context and lets the current
++    // state decide. Everything that can reject the request runs before
++    // anything is changed, so a refused transition leaves no trace.
++    private async Task<MaintenanceScheduleDTO> TransitionAsync(
++        long id, string label, MaintenanceTransitionRequest request, Action<MaintenanceContext> transition)
++    {
++        var schedule = await FindScheduleAsync(id);
++        var car = await _cars.GetByIdAsync(schedule.CarId)
++            ?? throw new ResourceNotFoundException($"Car not found: {schedule.CarId}");
++
++        var notes = AppendNote(schedule.Notes, label, request.Notes);
++
++        transition(new MaintenanceContext(schedule, car, Now));
++
++        schedule.Notes = notes;
++        await _schedules.SaveChangesAsync();
++        return ToDto(schedule);
++    }
++
++    private static string? AppendNote(string? existing, string label, string? note)
++    {
++        if (string.IsNullOrWhiteSpace(note)) return existing;
++
++        var labelled = $"{label}: {note.Trim()}";
++        var combined = string.IsNullOrWhiteSpace(existing) ? labelled : $"{existing} | {labelled}";
++        if (combined.Length > MaxNotesLength)
++            throw new ApiException($"notes would exceed {MaxNotesLength} characters", HttpStatusCode.BadRequest);
++        return combined;
++    }
++
++    private async Task<MaintenanceSchedule> FindScheduleAsync(long id) =>
++        await _schedules.GetByIdAsync(id)
++            ?? throw new ResourceNotFoundException($"Maintenance schedule not found: {id}");
++
++    private static MaintenanceScheduleDTO ToDto(MaintenanceSchedule schedule) => new()
++    {
++        MaintenanceScheduleId = schedule.MaintenanceScheduleId,
++        CarId = schedule.CarId,
++        MaintenanceType = schedule.MaintenanceType,
++        ScheduledDate = schedule.ScheduledDate,
++        Status = schedule.Status,
++        StartedAt = schedule.StartedAt,
++        CompletedAt = schedule.CompletedAt,
++        Notes = schedule.Notes,
++    };
++}
+diff --git a/WanderCar_DotNet/src/FlemanApi/Validators/MaintenanceRequestValidators.cs b/WanderCar_DotNet/src/FlemanApi/Validators/MaintenanceRequestValidators.cs
+new file mode 100644
+index 0000000..5f9edb7
+--- /dev/null
++++ b/WanderCar_DotNet/src/FlemanApi/Validators/MaintenanceRequestValidators.cs
+@@ -0,0 +1,35 @@
++using FlemanApi.DTO;
++using FluentValidation;
++
++namespace FlemanApi.Validators;
++
++// Shape checks only. "Not in the past" needs the clock and "car exists"
++// needs the database, so both are checked by MaintenanceService.
++public class ScheduleMaintenanceRequestValidator : AbstractValidator<ScheduleMaintenanceRequest>
++{
++    public const int MaxNotesLength = 500;
++
++    public ScheduleMaintenanceRequestValidator()
++    {
++        RuleFor(x => x.CarId).NotNull().WithMessage("carId is required");
++
++        RuleFor(x => x.MaintenanceType)
++            .NotNull().WithMessage("maintenanceType is required")
++            .IsInEnum().WithMessage("maintenanceType must be SERVICE, INSPECTION or REPAIR");
++
++        RuleFor(x => x.ScheduledDate).NotNull().WithMessage("scheduledDate is required");
++
++        RuleFor(x => x.Notes)
++            .MaximumLength(MaxNotesLength).WithMessage("notes must be at most 500 characters");
++    }
++}
++
++public class MaintenanceTransitionRequestValidator : AbstractValidator<MaintenanceTransitionRequest>
++{
++    public MaintenanceTransitionRequestValidator()
++    {
++        RuleFor(x => x.Notes)
++            .MaximumLength(ScheduleMaintenanceRequestValidator.MaxNotesLength)
++            .WithMessage("notes must be at most 500 characters");
++    }
++}

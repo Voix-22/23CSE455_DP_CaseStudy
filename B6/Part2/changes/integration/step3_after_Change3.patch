@@ -1,0 +1,926 @@
+diff --git a/WanderCar_DotNet/src/FlemanApi.Tests/Services/BookingServiceTests.cs b/WanderCar_DotNet/src/FlemanApi.Tests/Services/BookingServiceTests.cs
+index b7bb873..1985369 100644
+--- a/WanderCar_DotNet/src/FlemanApi.Tests/Services/BookingServiceTests.cs
++++ b/WanderCar_DotNet/src/FlemanApi.Tests/Services/BookingServiceTests.cs
+@@ -6,6 +6,7 @@ using FlemanApi.Repository;
+ using FlemanApi.Security;
+ using FlemanApi.Service;
+ using FlemanApi.Tests.TestHelpers;
++using FlemanApi.Util;
+ using FluentAssertions;
+ using Microsoft.Extensions.Logging.Abstractions;
+ using Moq;
+@@ -30,6 +31,7 @@ public class BookingServiceTests
+     private Mock<IAddonService> _addonServiceMock = null!;
+     private Mock<IEmailService> _emailServiceMock = null!;
+     private Mock<IAuthenticatedUserAccessor> _currentUserMock = null!;
++    private Mock<IPricingPolicySelector> _pricingPolicySelectorMock = null!;
+ 
+     private BookingService _service = null!;
+ 
+@@ -86,6 +88,15 @@ public class BookingServiceTests
+         _currentUserMock.Setup(c => c.GetCurrentRole()).Returns("STAFF");
+         _currentUserMock.Setup(c => c.GetCurrentUserId()).Returns(1);
+ 
++        _pricingPolicySelectorMock = new Mock<IPricingPolicySelector>();
++
++        _pricingPolicySelectorMock
++            .Setup(s => s.SelectPolicy(
++                It.IsAny<CarType>(),
++                It.IsAny<DateTime>(),
++                It.IsAny<DateTime>()))
++            .Returns(new StandardPricingPolicy());
++
+         _service = new BookingService(
+             bookingsRepo.Object,
+             bookingDetailsRepo.Object,
+@@ -101,7 +112,8 @@ public class BookingServiceTests
+             _addonServiceMock.Object,
+             _emailServiceMock.Object,
+             _currentUserMock.Object,
+-            NullLogger<BookingService>.Instance);
++            NullLogger<BookingService>.Instance,
++            _pricingPolicySelectorMock.Object);
+     }
+ 
+     private static CreateBookingRequest MakeCreateRequest() => new()
+@@ -134,7 +146,6 @@ public class BookingServiceTests
+ 
+         result.BookingStatus.Should().Be("CONFIRMED");
+         result.ConfirmationNo.Should().HaveLength(8);
+-        // 5 days * 100 daily rate + 0 addons (no addons requested)
+         result.EstimatedAmount.Should().Be(500.0);
+         _bookings.Should().ContainSingle();
+     }
+@@ -147,7 +158,6 @@ public class BookingServiceTests
+ 
+         var result = await _service.CreateBookingAsync(request);
+ 
+-        // 5 days * 100 daily + (10 rate * 2 qty * 5 days) addon = 500 + 100
+         result.EstimatedAmount.Should().Be(600.0);
+         _bookingDetails.Should().ContainSingle();
+     }
+@@ -389,4 +399,4 @@ public class BookingServiceTests
+ 
+         result.Should().BeEmpty();
+     }
+-}
++}
+\ No newline at end of file
+diff --git a/WanderCar_DotNet/src/FlemanApi.Tests/Services/MaintenanceFleetAvailabilityTests.cs b/WanderCar_DotNet/src/FlemanApi.Tests/Services/MaintenanceFleetAvailabilityTests.cs
+index a35cf4f..b4e25cc 100644
+--- a/WanderCar_DotNet/src/FlemanApi.Tests/Services/MaintenanceFleetAvailabilityTests.cs
++++ b/WanderCar_DotNet/src/FlemanApi.Tests/Services/MaintenanceFleetAvailabilityTests.cs
+@@ -4,6 +4,7 @@ using FlemanApi.Models;
+ using FlemanApi.Repository;
+ using FlemanApi.Service;
+ using FlemanApi.Tests.TestHelpers;
++using FlemanApi.Util;
+ using FluentAssertions;
+ using Microsoft.EntityFrameworkCore;
+ using Microsoft.Extensions.Logging.Abstractions;
+@@ -72,7 +73,9 @@ public class MaintenanceFleetAvailabilityTests
+             vehicleService.Object,
+             Mock.Of<IEmailService>(),
+             Mock.Of<IInvoicePdfService>(),
+-            NullLogger<StaffService>.Instance);
++            NullLogger<StaffService>.Instance,
++            Mock.Of<IPricingPolicySelector>(),
++            clock);
+ 
+         _maintenanceService = new MaintenanceService(
+             new GenericRepository<MaintenanceSchedule, long>(_context), cars, clock);
+diff --git a/WanderCar_DotNet/src/FlemanApi.Tests/Services/StaffServiceTests.cs b/WanderCar_DotNet/src/FlemanApi.Tests/Services/StaffServiceTests.cs
+index 73a8371..f8e07c4 100644
+--- a/WanderCar_DotNet/src/FlemanApi.Tests/Services/StaffServiceTests.cs
++++ b/WanderCar_DotNet/src/FlemanApi.Tests/Services/StaffServiceTests.cs
+@@ -5,6 +5,7 @@ using FlemanApi.Models;
+ using FlemanApi.Repository;
+ using FlemanApi.Service;
+ using FlemanApi.Tests.TestHelpers;
++using FlemanApi.Util;
+ using FluentAssertions;
+ using Microsoft.Extensions.Logging.Abstractions;
+ using Moq;
+@@ -28,9 +29,31 @@ public class StaffServiceTests
+     private Mock<IVehicleService> _vehicleServiceMock = null!;
+     private Mock<IEmailService> _emailServiceMock = null!;
+     private Mock<IInvoicePdfService> _invoicePdfServiceMock = null!;
++    private Mock<IPricingPolicySelector> _pricingPolicySelectorMock = null!;
++
++    // Fixed "now" — 2026-08-05 12:00. Handover is set to 2026-08-01 12:00
++    // by GivenHandedOverBooking, so elapsed time is exactly 4 days.
++    private static readonly DateTime FixedNow = new(2026, 8, 5, 12, 0, 0);
++    private FixedTimeProvider _timeProvider = null!;
+ 
+     private StaffService _service = null!;
+ 
++    // Minimal TimeProvider subclass that returns a caller-controlled
++    // instant. LocalTimeZone is UTC so GetLocalNow() == GetUtcNow() and the
++    // service's DateTime arithmetic stays straightforward.
++    private sealed class FixedTimeProvider : TimeProvider
++    {
++        private readonly DateTimeOffset _utcNow;
++
++        public FixedTimeProvider(DateTime utcNow)
++        {
++            _utcNow = new DateTimeOffset(DateTime.SpecifyKind(utcNow, DateTimeKind.Utc));
++        }
++
++        public override DateTimeOffset GetUtcNow() => _utcNow;
++        public override TimeZoneInfo LocalTimeZone => TimeZoneInfo.Utc;
++    }
++
+     [SetUp]
+     public void SetUp()
+     {
+@@ -84,6 +107,16 @@ public class StaffServiceTests
+         _invoicePdfServiceMock = new Mock<IInvoicePdfService>();
+         _invoicePdfServiceMock.Setup(p => p.GenerateInvoiceAsync(It.IsAny<long>())).ReturnsAsync(new byte[] { 1, 2, 3 });
+ 
++        _pricingPolicySelectorMock = new Mock<IPricingPolicySelector>();
++        _pricingPolicySelectorMock
++            .Setup(s => s.SelectPolicy(
++                It.IsAny<CarType>(),
++                It.IsAny<DateTime>(),
++                It.IsAny<DateTime>()))
++            .Returns(new StandardPricingPolicy());
++
++        _timeProvider = new FixedTimeProvider(FixedNow);
++
+         _service = new StaffService(
+             bookingsRepo.Object,
+             bookingDetailsRepo.Object,
+@@ -98,7 +131,9 @@ public class StaffServiceTests
+             _vehicleServiceMock.Object,
+             _emailServiceMock.Object,
+             _invoicePdfServiceMock.Object,
+-            NullLogger<StaffService>.Instance);
++            NullLogger<StaffService>.Instance,
++            _pricingPolicySelectorMock.Object,
++            _timeProvider);
+     }
+ 
+     private BookingHeader Booking => _bookings.Single();
+@@ -193,7 +228,8 @@ public class StaffServiceTests
+     private void GivenHandedOverBooking(int handoverFuel = 100)
+     {
+         Booking.CarId = 1;
+-        Booking.ActualHandoverDatetime = new DateTime(2026, 8, 1);
++        // Exactly 4 days before FixedNow (2026-08-05 12:00).
++        Booking.ActualHandoverDatetime = FixedNow.AddDays(-4);
+         Booking.HandoverFuelLevel = handoverFuel;
+         Car.Status = CarStatus.BOOKED;
+         Car.IsAvailable = false;
+@@ -323,6 +359,7 @@ public class StaffServiceTests
+ 
+         _invoiceHeaders.Should().ContainSingle();
+         _invoiceDetails.Should().ContainSingle(d => d.AddonName == "GPS");
++        // 4 days (FixedNow - FixedNow.AddDays(-4)) × 10 rate × 1 qty = 40.0
+         result.AddonAmount.Should().Be(40.0);
+     }
+ 
+@@ -378,4 +415,4 @@ public class StaffServiceTests
+         result[0].TotalCars.Should().Be(5);
+         result[0].AvailableCars.Should().Be(3);
+     }
+-}
++}
+\ No newline at end of file
+diff --git a/WanderCar_DotNet/src/FlemanApi.Tests/Util/PricingPolicyTests.cs b/WanderCar_DotNet/src/FlemanApi.Tests/Util/PricingPolicyTests.cs
+new file mode 100644
+index 0000000..e371ae6
+--- /dev/null
++++ b/WanderCar_DotNet/src/FlemanApi.Tests/Util/PricingPolicyTests.cs
+@@ -0,0 +1,148 @@
++
++using FlemanApi.Models;
++using FlemanApi.Util;
++using FluentAssertions;
++using Microsoft.Extensions.Options;
++using NUnit.Framework;
++
++namespace FlemanApi.Tests.Util;
++
++[TestFixture]
++public class PricingPolicyTests
++{
++    private static CarType MakeCarType() => new()
++    {
++        CarTypeId = 1,
++        CarTypeName = "Sedan",
++        DailyRate = 100,
++        WeeklyRate = 600,
++        MonthlyRate = 2000
++    };
++
++    private static IOptions<PricingSettings> MakeOptions() =>
++        Options.Create(new PricingSettings
++        {
++            WeekendSurchargePercent = 20,
++            SeasonalSurchargePercent = 30,
++            PeakMonths = [12, 1, 4]
++        });
++
++    [Test]
++    public void WeekendPolicy_AddsSurcharge_WhenRentalIncludesWeekend()
++    {
++        var policy = new WeekendPricingPolicy(MakeOptions());
++        var car = MakeCarType();
++
++        // Friday to Monday: three rental days, including Saturday and Sunday.
++        var pickup = new DateTime(2026, 10, 9);
++        var returnDate = new DateTime(2026, 10, 12);
++
++        var actual = policy.CalculatePrice(car, pickup, returnDate);
++
++        actual.Should().Be(360); // Standard 300 + 20% surcharge.
++    }
++
++    [Test]
++    public void WeekendPolicy_DoesNotAddSurcharge_WhenNoWeekendIncluded()
++    {
++        var policy = new WeekendPricingPolicy(MakeOptions());
++        var car = MakeCarType();
++
++        // Monday to Thursday.
++        var pickup = new DateTime(2026, 10, 5);
++        var returnDate = new DateTime(2026, 10, 8);
++
++        var actual = policy.CalculatePrice(car, pickup, returnDate);
++
++        actual.Should().Be(300);
++    }
++
++    [Test]
++    public void SeasonalPolicy_AddsSurcharge_WhenPickupMonthIsPeak()
++    {
++        var policy = new SeasonalPricingPolicy(MakeOptions());
++        var car = MakeCarType();
++
++        var pickup = new DateTime(2026, 12, 7);
++        var returnDate = new DateTime(2026, 12, 10);
++
++        var actual = policy.CalculatePrice(car, pickup, returnDate);
++
++        actual.Should().Be(390); // Standard 300 + 30% surcharge.
++    }
++
++    [Test]
++    public void SeasonalPolicy_DoesNotAddSurcharge_WhenPickupMonthIsNotPeak()
++    {
++        var policy = new SeasonalPricingPolicy(MakeOptions());
++        var car = MakeCarType();
++
++        var pickup = new DateTime(2026, 10, 5);
++        var returnDate = new DateTime(2026, 10, 8);
++
++        var actual = policy.CalculatePrice(car, pickup, returnDate);
++
++        actual.Should().Be(300);
++    }
++
++    [Test]
++    public void Selector_ChoosesSeasonalBeforeWeekend()
++    {
++        var options = MakeOptions();
++
++        var selector = new PricingPolicySelector(
++            new StandardPricingPolicy(),
++            new WeekendPricingPolicy(options),
++            new SeasonalPricingPolicy(options),
++            options);
++
++        // Peak month and weekend: seasonal takes priority.
++        var pickup = new DateTime(2026, 12, 11);
++        var returnDate = new DateTime(2026, 12, 14);
++
++        var actual = selector.SelectPolicy(
++            MakeCarType(), pickup, returnDate);
++
++        actual.Name.Should().Be("Seasonal");
++    }
++
++    [Test]
++    public void Selector_ChoosesWeekend_WhenNotPeakButWeekendIncluded()
++    {
++        var options = MakeOptions();
++
++        var selector = new PricingPolicySelector(
++            new StandardPricingPolicy(),
++            new WeekendPricingPolicy(options),
++            new SeasonalPricingPolicy(options),
++            options);
++
++        var pickup = new DateTime(2026, 10, 9);
++        var returnDate = new DateTime(2026, 10, 12);
++
++        var actual = selector.SelectPolicy(
++            MakeCarType(), pickup, returnDate);
++
++        actual.Name.Should().Be("Weekend");
++    }
++
++    [Test]
++    public void Selector_ChoosesStandard_WhenNeitherConditionApplies()
++    {
++        var options = MakeOptions();
++
++        var selector = new PricingPolicySelector(
++            new StandardPricingPolicy(),
++            new WeekendPricingPolicy(options),
++            new SeasonalPricingPolicy(options),
++            options);
++
++        var pickup = new DateTime(2026, 10, 5);
++        var returnDate = new DateTime(2026, 10, 8);
++
++        var actual = selector.SelectPolicy(
++            MakeCarType(), pickup, returnDate);
++
++        actual.Name.Should().Be("Standard");
++    }
++}
+diff --git a/WanderCar_DotNet/src/FlemanApi.Tests/Util/StandardPricingPolicyTests.cs b/WanderCar_DotNet/src/FlemanApi.Tests/Util/StandardPricingPolicyTests.cs
+new file mode 100644
+index 0000000..a9e6e91
+--- /dev/null
++++ b/WanderCar_DotNet/src/FlemanApi.Tests/Util/StandardPricingPolicyTests.cs
+@@ -0,0 +1,90 @@
++
++using FlemanApi.Models;
++using FlemanApi.Util;
++using FluentAssertions;
++using NUnit.Framework;
++
++namespace FlemanApi.Tests.Util;
++
++[TestFixture]
++public class StandardPricingPolicyTests
++{
++    private readonly StandardPricingPolicy _policy = new();
++
++    private static CarType MakeCarType(
++        double daily = 100.0,
++        double? weekly = 600.0,
++        double? monthly = 2000.0)
++    {
++        return new CarType
++        {
++            CarTypeId = 1,
++            CarTypeName = "Sedan",
++            DailyRate = daily,
++            WeeklyRate = weekly,
++            MonthlyRate = monthly
++        };
++    }
++
++    [TestCase(0)]
++    [TestCase(1)]
++    [TestCase(5)]
++    [TestCase(6)]
++    [TestCase(7)]
++    [TestCase(10)]
++    [TestCase(29)]
++    [TestCase(30)]
++    [TestCase(35)]
++    [TestCase(37)]
++    [TestCase(60)]
++    [TestCase(90)]
++    public void StandardPricing_MatchesBaseline(int days)
++    {
++        var carType = MakeCarType();
++        var pickup = new DateTime(2026, 10, 5, 10, 0, 0);
++        var returnDate = pickup.AddDays(days);
++
++        var expected =
++            RentalRateCalculator.CalculateRentalAmount(carType, days);
++
++        var actual = _policy.CalculatePrice(carType, pickup, returnDate);
++
++        actual.Should().Be(expected);
++    }
++
++    [Test]
++    public void StandardPricing_WithNullRates_MatchesBaseline()
++    {
++        var carType = MakeCarType(weekly: null, monthly: null);
++        var pickup = new DateTime(2026, 10, 5);
++        var returnDate = pickup.AddDays(15);
++
++        var expected =
++            RentalRateCalculator.CalculateRentalAmount(carType, 15);
++
++        var actual = _policy.CalculatePrice(carType, pickup, returnDate);
++
++        actual.Should().Be(expected);
++    }
++
++    [Test]
++    public void StandardPricing_WithZeroRates_MatchesBaseline()
++    {
++        var carType = MakeCarType(weekly: 0, monthly: 0);
++        var pickup = new DateTime(2026, 10, 5);
++        var returnDate = pickup.AddDays(10);
++
++        var expected =
++            RentalRateCalculator.CalculateRentalAmount(carType, 10);
++
++        var actual = _policy.CalculatePrice(carType, pickup, returnDate);
++
++        actual.Should().Be(expected);
++    }
++
++    [Test]
++    public void StandardPricing_HasCorrectName()
++    {
++        _policy.Name.Should().Be("Standard");
++    }
++}
+diff --git a/WanderCar_DotNet/src/FlemanApi/Program.cs b/WanderCar_DotNet/src/FlemanApi/Program.cs
+index c12424f..512dc89 100644
+--- a/WanderCar_DotNet/src/FlemanApi/Program.cs
++++ b/WanderCar_DotNet/src/FlemanApi/Program.cs
+@@ -1,5 +1,6 @@
+ using System.Reflection;
+ using System.Text;
++using FlemanApi.Util;
+ using FlemanApi.Data;
+ using FlemanApi.Middleware;
+ using FlemanApi.Security;
+@@ -149,6 +150,8 @@ builder.Services.AddCors(options =>
+ // ---- Security helpers -------------------------------------------------
+ builder.Services.AddScoped<IJwtTokenService, JwtTokenService>();
+ builder.Services.AddScoped<IAuthenticatedUserAccessor, AuthenticatedUserAccessor>();
++// ---- Clock abstraction (testable time) --------------------------------
++builder.Services.AddSingleton(TimeProvider.System);
+ 
+ // ---- Swagger with JWT bearer support ---------------------------------
+ builder.Services.AddEndpointsApiExplorer();
+@@ -202,6 +205,15 @@ builder.Services.AddScoped<IEmailService, EmailService>();
+ builder.Services.AddScoped<IInvoicePdfService, JavaInvoicePdfService>();
+ builder.Services.AddScoped<IStaffService, StaffService>();
+ 
++// CH02 — Strategy-based pricing policies
++builder.Services.Configure<PricingSettings>(
++    builder.Configuration.GetSection(PricingSettings.SectionName));
++
++builder.Services.AddScoped<StandardPricingPolicy>();
++builder.Services.AddScoped<WeekendPricingPolicy>();
++builder.Services.AddScoped<SeasonalPricingPolicy>();
++builder.Services.AddScoped<IPricingPolicySelector, PricingPolicySelector>();
++
+ builder.Services.Configure<AiSettings>(builder.Configuration.GetSection(AiSettings.SectionName));
+ builder.Services.AddScoped<IAiInsightsService, AiInsightsService>();
+ 
+@@ -214,8 +226,8 @@ builder.Services.AddHttpClient<IJavaMicroserviceClient, JavaMicroserviceClient>(
+ });
+ 
+ // ---- CH03: fleet-maintenance scheduling (State) -------------------------
+-// New code takes "now" from an injected clock instead of DateTime.Now.
+-builder.Services.AddSingleton(TimeProvider.System);
++// MaintenanceService takes "now" from the TimeProvider registered under
++// "Clock abstraction" above, not from DateTime.Now.
+ builder.Services.AddScoped<IMaintenanceService, MaintenanceService>();
+ 
+ var app = builder.Build();
+@@ -244,4 +256,4 @@ using (var scope = app.Services.CreateScope())
+     await FlemanApi.Data.DataSeeder.SeedAsync(db);
+ }
+ 
+-app.Run();
++app.Run();
+\ No newline at end of file
+diff --git a/WanderCar_DotNet/src/FlemanApi/Service/BookingService.cs b/WanderCar_DotNet/src/FlemanApi/Service/BookingService.cs
+index c829922..1247204 100644
+--- a/WanderCar_DotNet/src/FlemanApi/Service/BookingService.cs
++++ b/WanderCar_DotNet/src/FlemanApi/Service/BookingService.cs
+@@ -40,6 +40,7 @@ public class BookingService : IBookingService
+     private readonly IEmailService _emailService;
+     private readonly IAuthenticatedUserAccessor _currentUser;
+     private readonly ILogger<BookingService> _logger;
++    private readonly IPricingPolicySelector _pricingPolicySelector;
+ 
+     public BookingService(
+         IGenericRepository<BookingHeader, long> bookings,
+@@ -56,7 +57,8 @@ public class BookingService : IBookingService
+         IAddonService addonService,
+         IEmailService emailService,
+         IAuthenticatedUserAccessor currentUser,
+-        ILogger<BookingService> logger)
++        ILogger<BookingService> logger,
++        IPricingPolicySelector pricingPolicySelector)
+     {
+         _bookings = bookings;
+         _bookingDetails = bookingDetails;
+@@ -73,6 +75,7 @@ public class BookingService : IBookingService
+         _emailService = emailService;
+         _currentUser = currentUser;
+         _logger = logger;
++        _pricingPolicySelector = pricingPolicySelector;
+     }
+ 
+     public async Task<BookingResponseDTO> CreateBookingAsync(CreateBookingRequest request)
+@@ -136,7 +139,16 @@ public class BookingService : IBookingService
+         };
+ 
+         var days = DaysBetween(request.PickupDatetime.Value, request.ReturnDatetime.Value);
+-        var rentalAmount = RentalRateCalculator.CalculateRentalAmount(carType, days);
++
++        var rentalAmount = _pricingPolicySelector
++            .SelectPolicy(
++                carType,
++                request.PickupDatetime.Value,
++                request.ReturnDatetime.Value)
++            .CalculatePrice(
++                carType,
++                request.PickupDatetime.Value,
++                request.ReturnDatetime.Value);
+ 
+         await _bookings.AddAsync(header);
+         await _bookings.SaveChangesAsync();
+@@ -313,7 +325,19 @@ public class BookingService : IBookingService
+         }
+ 
+         var currentCarType = await _carTypes.GetByIdAsync(header.CarTypeId);
+-        var rentalAmount = currentCarType is not null ? RentalRateCalculator.CalculateRentalAmount(currentCarType, days) : 0.0;
++
++        var rentalAmount = currentCarType is not null
++            ? _pricingPolicySelector
++                .SelectPolicy(
++                    currentCarType,
++                    header.PickupDatetime,
++                    header.ReturnDatetime)
++                .CalculatePrice(
++                    currentCarType,
++                    header.PickupDatetime,
++                    header.ReturnDatetime)
++            : 0.0;
++
+         header.EstimatedAmount = rentalAmount + addonAmount;
+ 
+         await _bookings.SaveChangesAsync();
+@@ -456,4 +480,4 @@ public class BookingService : IBookingService
+ 
+         return dto;
+     }
+-}
++}
+\ No newline at end of file
+diff --git a/WanderCar_DotNet/src/FlemanApi/Service/StaffService.cs b/WanderCar_DotNet/src/FlemanApi/Service/StaffService.cs
+index 57201cb..273649e 100644
+--- a/WanderCar_DotNet/src/FlemanApi/Service/StaffService.cs
++++ b/WanderCar_DotNet/src/FlemanApi/Service/StaffService.cs
+@@ -29,6 +29,8 @@ public class StaffService : IStaffService
+     private readonly IEmailService _emailService;
+     private readonly IInvoicePdfService _invoicePdfService;
+     private readonly ILogger<StaffService> _logger;
++    private readonly IPricingPolicySelector _pricingPolicySelector;
++    private readonly TimeProvider _timeProvider;
+ 
+     public StaffService(
+         IGenericRepository<BookingHeader, long> bookings,
+@@ -44,7 +46,9 @@ public class StaffService : IStaffService
+         IVehicleService vehicleService,
+         IEmailService emailService,
+         IInvoicePdfService invoicePdfService,
+-        ILogger<StaffService> logger)
++        ILogger<StaffService> logger,
++        IPricingPolicySelector pricingPolicySelector,
++        TimeProvider timeProvider)
+     {
+         _bookings = bookings;
+         _bookingDetails = bookingDetails;
+@@ -60,8 +64,16 @@ public class StaffService : IStaffService
+         _emailService = emailService;
+         _invoicePdfService = invoicePdfService;
+         _logger = logger;
++        _pricingPolicySelector = pricingPolicySelector;
++        _timeProvider = timeProvider;
+     }
+ 
++    // Local wall-clock "now" via the injected clock. In production this is
++    // TimeProvider.System; in tests it can be a fixed fake so day-count
++    // arithmetic is deterministic and not subject to millisecond drift
++    // between the test's own DateTime.Now and the method's internal call.
++    private DateTime Now => _timeProvider.GetLocalNow().DateTime;
++
+     public async Task<BookingResponseDTO> HandoverVehicleAsync(string confirmationNo, HandoverRequest request)
+     {
+         var header = await FindHeaderAsync(confirmationNo);
+@@ -88,7 +100,7 @@ public class StaffService : IStaffService
+ 
+         header.CarId = car.CarId;
+         header.BookingStatus = BookingStatus.ONGOING;
+-        header.ActualHandoverDatetime = DateTime.Now;
++        header.ActualHandoverDatetime = Now;
+         // Snapshot onto the booking — Car.FuelLevel gets overwritten again
+         // at return, so this is the only place the return-time fuel-
+         // shortfall charge can still read it from.
+@@ -121,11 +133,21 @@ public class StaffService : IStaffService
+         // Bill against what actually happened — hand-over time and right
+         // now — not the originally booked pickup/return window.
+         var actualHandover = header.ActualHandoverDatetime ?? header.PickupDatetime;
+-        var actualReturn = DateTime.Now;
++        var actualReturn = Now;
+         header.ActualReturnDatetime = actualReturn;
+ 
+         var days = DaysBetween(actualHandover, actualReturn);
+-        var rentalAmount = RentalRateCalculator.CalculateRentalAmount(carType, days);
++
++        var selectedPolicy = _pricingPolicySelector.SelectPolicy(
++            carType,
++            actualHandover,
++            actualReturn);
++
++        var rentalAmount = selectedPolicy.CalculatePrice(
++            carType,
++            actualHandover,
++            actualReturn);
++
+         // Re-priced against the actual days billed, not the subtotal frozen
+         // on the line at booking time — an early return shortens rentalAmount
+         // above the same way, so add-ons need to shrink with it too instead
+@@ -146,7 +168,7 @@ public class StaffService : IStaffService
+ 
+         var invoice = new InvoiceHeader
+         {
+-            InvoiceDate = DateTime.Now,
++            InvoiceDate = Now,
+             HandoverDatetime = actualHandover,
+             ReturnDatetime = actualReturn,
+             HandoverFuelLevel = handoverFuelLevel,
+@@ -304,4 +326,4 @@ public class StaffService : IStaffService
+         DamageNotes = inv.DamageNotes,
+         Days = inv.Days,
+     };
+-}
++}
+\ No newline at end of file
+diff --git a/WanderCar_DotNet/src/FlemanApi/Util/IPricingPolicy.cs b/WanderCar_DotNet/src/FlemanApi/Util/IPricingPolicy.cs
+new file mode 100644
+index 0000000..2b918c8
+--- /dev/null
++++ b/WanderCar_DotNet/src/FlemanApi/Util/IPricingPolicy.cs
+@@ -0,0 +1,14 @@
++
++using FlemanApi.Models;
++
++namespace FlemanApi.Util;
++
++public interface IPricingPolicy
++{
++    string Name { get; }
++
++    double CalculatePrice(
++        CarType carType,
++        DateTime pickupDate,
++        DateTime returnDate);
++}
+diff --git a/WanderCar_DotNet/src/FlemanApi/Util/IPricingPolicySelector.cs b/WanderCar_DotNet/src/FlemanApi/Util/IPricingPolicySelector.cs
+new file mode 100644
+index 0000000..f7e15b8
+--- /dev/null
++++ b/WanderCar_DotNet/src/FlemanApi/Util/IPricingPolicySelector.cs
+@@ -0,0 +1,12 @@
++
++using FlemanApi.Models;
++
++namespace FlemanApi.Util;
++
++public interface IPricingPolicySelector
++{
++    IPricingPolicy SelectPolicy(
++        CarType carType,
++        DateTime pickupDate,
++        DateTime returnDate);
++}
+diff --git a/WanderCar_DotNet/src/FlemanApi/Util/PricingPolicySelector.cs b/WanderCar_DotNet/src/FlemanApi/Util/PricingPolicySelector.cs
+new file mode 100644
+index 0000000..4b2ef67
+--- /dev/null
++++ b/WanderCar_DotNet/src/FlemanApi/Util/PricingPolicySelector.cs
+@@ -0,0 +1,46 @@
++
++using FlemanApi.Models;
++using Microsoft.Extensions.Options;
++
++namespace FlemanApi.Util;
++
++public sealed class PricingPolicySelector : IPricingPolicySelector
++{
++    private readonly IPricingPolicy _standard;
++    private readonly IPricingPolicy _weekend;
++    private readonly IPricingPolicy _seasonal;
++    private readonly PricingSettings _settings;
++
++    public PricingPolicySelector(
++        StandardPricingPolicy standard,
++        WeekendPricingPolicy weekend,
++        SeasonalPricingPolicy seasonal,
++        IOptions<PricingSettings> options)
++    {
++        _standard = standard;
++        _weekend = weekend;
++        _seasonal = seasonal;
++        _settings = options.Value;
++    }
++
++    public IPricingPolicy SelectPolicy(
++        CarType carType,
++        DateTime pickupDate,
++        DateTime returnDate)
++    {
++        if (_settings.PeakMonths.Contains(pickupDate.Month))
++        {
++            return _seasonal;
++        }
++
++        for (var date = pickupDate.Date; date < returnDate.Date; date = date.AddDays(1))
++        {
++            if (date.DayOfWeek is DayOfWeek.Saturday or DayOfWeek.Sunday)
++            {
++                return _weekend;
++            }
++        }
++
++        return _standard;
++    }
++}
+diff --git a/WanderCar_DotNet/src/FlemanApi/Util/PricingSettings.cs b/WanderCar_DotNet/src/FlemanApi/Util/PricingSettings.cs
+new file mode 100644
+index 0000000..f11565d
+--- /dev/null
++++ b/WanderCar_DotNet/src/FlemanApi/Util/PricingSettings.cs
+@@ -0,0 +1,16 @@
++
++namespace FlemanApi.Util;
++
++public class PricingSettings
++{
++    public const string SectionName = "PricingSettings";
++
++    // Extra percentage applied to rentals that include weekend days.
++    public double WeekendSurchargePercent { get; set; } = 20.0;
++
++    // Extra percentage applied when the pickup date is in a peak month.
++    public double SeasonalSurchargePercent { get; set; } = 30.0;
++
++    // Calendar months considered peak season (1 = January, 12 = December).
++    public int[] PeakMonths { get; set; } = [12, 1, 4];
++}
+diff --git a/WanderCar_DotNet/src/FlemanApi/Util/RentalDurationCalculator.cs b/WanderCar_DotNet/src/FlemanApi/Util/RentalDurationCalculator.cs
+new file mode 100644
+index 0000000..29c63cf
+--- /dev/null
++++ b/WanderCar_DotNet/src/FlemanApi/Util/RentalDurationCalculator.cs
+@@ -0,0 +1,13 @@
++
++namespace FlemanApi.Util;
++
++public static class RentalDurationCalculator
++{
++    public static int DaysBetween(DateTime pickup, DateTime returnDate)
++    {
++        var hours = (returnDate - pickup).TotalHours;
++        var fullDays = (long)Math.Ceiling(hours / 24.0);
++
++        return (int)Math.Max(1, fullDays);
++    }
++}
+diff --git a/WanderCar_DotNet/src/FlemanApi/Util/SeasonalPricingPolicy.cs b/WanderCar_DotNet/src/FlemanApi/Util/SeasonalPricingPolicy.cs
+new file mode 100644
+index 0000000..c9292f6
+--- /dev/null
++++ b/WanderCar_DotNet/src/FlemanApi/Util/SeasonalPricingPolicy.cs
+@@ -0,0 +1,37 @@
++using FlemanApi.Models;
++using Microsoft.Extensions.Options;
++
++namespace FlemanApi.Util;
++
++public sealed class SeasonalPricingPolicy : IPricingPolicy
++{
++    private readonly PricingSettings _settings;
++
++    public SeasonalPricingPolicy(IOptions<PricingSettings> options)
++    {
++        _settings = options.Value;
++    }
++
++    public string Name => "Seasonal";
++
++    public double CalculatePrice(
++        CarType carType,
++        DateTime pickupDate,
++        DateTime returnDate)
++    {
++        var days = RentalDurationCalculator.DaysBetween(
++            pickupDate,
++            returnDate);
++
++        var standardPrice =
++            RentalRateCalculator.CalculateRentalAmount(carType, days);
++
++        if (!_settings.PeakMonths.Contains(pickupDate.Month))
++        {
++            return standardPrice;
++        }
++
++        return standardPrice *
++               (1 + _settings.SeasonalSurchargePercent / 100.0);
++    }
++}
+\ No newline at end of file
+diff --git a/WanderCar_DotNet/src/FlemanApi/Util/StandardPricingPolicy.cs b/WanderCar_DotNet/src/FlemanApi/Util/StandardPricingPolicy.cs
+new file mode 100644
+index 0000000..a535be4
+--- /dev/null
++++ b/WanderCar_DotNet/src/FlemanApi/Util/StandardPricingPolicy.cs
+@@ -0,0 +1,27 @@
++using FlemanApi.Models;
++
++namespace FlemanApi.Util;
++
++public sealed class StandardPricingPolicy : IPricingPolicy
++{
++    public string Name => "Standard";
++
++    public double CalculatePrice(
++        CarType carType,
++        DateTime pickupDate,
++        DateTime returnDate)
++    {
++        if (returnDate <= pickupDate)
++        {
++            return 0.0;
++        }
++
++        var days = RentalDurationCalculator.DaysBetween(
++            pickupDate,
++            returnDate);
++
++        return RentalRateCalculator.CalculateRentalAmount(
++            carType,
++            days);
++    }
++}
+\ No newline at end of file
+diff --git a/WanderCar_DotNet/src/FlemanApi/Util/WeekendPricingPolicy.cs b/WanderCar_DotNet/src/FlemanApi/Util/WeekendPricingPolicy.cs
+new file mode 100644
+index 0000000..6c7b56a
+--- /dev/null
++++ b/WanderCar_DotNet/src/FlemanApi/Util/WeekendPricingPolicy.cs
+@@ -0,0 +1,51 @@
++using FlemanApi.Models;
++using Microsoft.Extensions.Options;
++
++namespace FlemanApi.Util;
++
++public sealed class WeekendPricingPolicy : IPricingPolicy
++{
++    private readonly PricingSettings _settings;
++
++    public WeekendPricingPolicy(IOptions<PricingSettings> options)
++    {
++        _settings = options.Value;
++    }
++
++    public string Name => "Weekend";
++
++    public double CalculatePrice(
++        CarType carType,
++        DateTime pickupDate,
++        DateTime returnDate)
++    {
++        var days = RentalDurationCalculator.DaysBetween(
++            pickupDate,
++            returnDate);
++
++        var standardPrice =
++            RentalRateCalculator.CalculateRentalAmount(carType, days);
++
++        var weekendDays = 0;
++        var currentDate = pickupDate.Date;
++
++        while (currentDate < returnDate.Date)
++        {
++            if (currentDate.DayOfWeek is DayOfWeek.Saturday
++                or DayOfWeek.Sunday)
++            {
++                weekendDays++;
++            }
++
++            currentDate = currentDate.AddDays(1);
++        }
++
++        if (weekendDays == 0)
++        {
++            return standardPrice;
++        }
++
++        return standardPrice *
++               (1 + _settings.WeekendSurchargePercent / 100.0);
++    }
++}
+\ No newline at end of file

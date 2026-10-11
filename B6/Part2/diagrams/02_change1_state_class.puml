@@ -1,0 +1,102 @@
+@startuml 02_change1_state_class
+!pragma layout smetana
+title Change1 - new pattern instance: State\n"Maintenance Schedule Workflow" (code after Change4)
+skinparam shadowing false
+skinparam classAttributeIconSize 0
+skinparam class {
+  BackgroundColor #FFE0B2
+  BorderColor Black
+}
+hide empty members
+
+class MaintenanceService <<Client>> {
+  +StartAsync(id, request)
+  +CompleteAsync(id, request)
+  +CancelAsync(id, request)
+  -TransitionAsync(id, label, request, transition)
+}
+note left of MaintenanceService
+  Service/MaintenanceService.cs:97-111
+  builds the context and calls
+  context.Start / Complete / Cancel;
+  no switch or if on Status
+end note
+
+class MaintenanceContext <<Context>> {
+  +Schedule : MaintenanceSchedule
+  +Car : Car
+  +Now : DateTime
+  +State : IMaintenanceState
+  +Start()
+  +Complete()
+  +Cancel()
+  +TransitionTo(next : IMaintenanceState)
+}
+note right of MaintenanceContext
+  Service/Maintenance/MaintenanceContext.cs:7-42
+  picks the state object from
+  Schedule.Status by dictionary lookup;
+  TransitionTo keeps State and
+  Schedule.Status in step
+end note
+
+interface IMaintenanceState <<State>> {
+  +Status : MaintenanceStatus
+  +Start(context : MaintenanceContext)
+  +Complete(context : MaintenanceContext)
+  +Cancel(context : MaintenanceContext)
+}
+
+abstract class MaintenanceStateBase {
+  +Start(context)
+  +Complete(context)
+  +Cancel(context)
+  #ReleaseCar(context)
+}
+note right of MaintenanceStateBase
+  default for all three operations:
+  throw ApiException (409 Conflict)
+end note
+
+class ScheduledState <<ConcreteState>> {
+  +Start(context)
+  +Cancel(context)
+}
+class InProgressState <<ConcreteState>> {
+  +Complete(context)
+  +Cancel(context)
+}
+class CompletedState <<ConcreteState>>
+class CancelledState <<ConcreteState>>
+
+class MaintenanceSchedule <<entity>> #FFFFFF {
+  +Status : MaintenanceStatus
+  +StartedAt : DateTime?
+  +CompletedAt : DateTime?
+}
+class Car <<entity>> #FFFFFF {
+  +Status : CarStatus
+  +IsAvailable : bool
+}
+
+MaintenanceService ..> MaintenanceContext : <<create>>
+MaintenanceContext --> IMaintenanceState : current state
+MaintenanceContext --> MaintenanceSchedule
+MaintenanceContext --> Car
+IMaintenanceState <|.. MaintenanceStateBase
+MaintenanceStateBase <|-- ScheduledState
+MaintenanceStateBase <|-- InProgressState
+MaintenanceStateBase <|-- CompletedState
+MaintenanceStateBase <|-- CancelledState
+ScheduledState ..> InProgressState : TransitionTo on Start
+ScheduledState ..> CancelledState : TransitionTo on Cancel
+InProgressState ..> CompletedState : TransitionTo on Complete
+InProgressState ..> CancelledState : TransitionTo on Cancel
+
+legend bottom
+  Each concrete state is a stateless shared instance (Instance).
+  CompletedState and CancelledState override nothing, so every
+  operation on a finished job returns 409.
+  White classes are entities, not pattern roles.
+endlegend
+@enduml
