@@ -1,0 +1,255 @@
+HUMAN VERIFICATION — PART 2 CH04 BOOKING LIFECYCLE NOTIFICATIONS (OBSERVER)
+
+Application:
+WanderCar / Fleman Vehicle Rental and Fleet Management Application
+
+Repository:
+https://github.com/Naveen-verma-7697/FleetManagment
+
+Baseline commit (before):
+dfc61ab8dd6f9bbb2301171457dc03946a249576
+
+After commit:
+9be38a6ff4cd5b10b813aedb42c3de8a1e82730d (tag ch04), one commit on the
+baseline, not rebased onto Change3. NOTE: this commit exists only in a
+local clone; replace it with the commit in the team fork once pushed.
+
+Source:
+WanderCar_DotNet/src/FlemanApi and WanderCar_DotNet/src/FlemanApi.Tests
+
+LLM output reviewed:
+- B6/Vani Sugovind S R/Vani_part2_chat.pdf — CANNOT BE OPENED. The file is
+  exactly 4,194,304 bytes and both pypdf ("Stream has ended unexpectedly")
+  and PyMuPDF (0 pages) fail to read it: the export or upload was cut off.
+  Re-export the chat and replace the file.
+- Part2/changes/Change4/ (requirement.md, pattern_effect.md, metrics.csv,
+  diff.patch, changed_files.txt, before_commit.txt, after_commit.txt,
+  test_result.txt, test_result_baseline.txt, prompt.md) produced with
+  Claude Code (Claude Opus 5.5), 2026-10-10 to 2026-10-11.
+- Part2/Pattern_count.csv, Part2/pattern_evaluation.csv, Part2/llm.csv
+  (Change4 rows).
+
+Reviewer:
+Vani Sugovind S R (AM.SC.U4CSE23266)
+
+Date of review:
+2026-10-11
+
+Tool versions on the reviewer's machine (dotnet --version):
+.NET SDK 8.0.425
+
+Verification principle:
+Each claim is checked by running the command given or by reading the file
+named. "LLM-reported" is what the LLM wrote. "Automated check" is a check
+run by Claude Code (an AI assistant) at the reviewer's request on
+2026-10-11, with the command and its real output; it is NOT a human
+check. "Observed by reviewer" and "Human status" are filled in by the
+reviewer only after doing the check. A check not done is NOT CHECKED.
+
+Human status values:
+CONFIRMED / CORRECTED (say what) / CANNOT CONFIRM / NOT CHECKED
+
+Commands (run in WanderCar_DotNet/):
+  T1  dotnet test src/FlemanApi.Tests/FlemanApi.Tests.csproj
+  T2  git diff --shortstat dfc61ab8 <after>
+  T3  git diff --stat dfc61ab8 <after> -- src/FlemanApi.Tests/Services/BookingServiceTests.cs
+  T4  (in src/FlemanApi) find . -name '*.cs' -not -path './obj/*' -not -path './bin/*' -not -path './Migrations/*' | xargs cat | grep -vE '^\s*$' | grep -vE '^\s*//' | wc -l
+
+============================================================
+1. TEST RESULT AFTER THE CHANGE
+------------------------------------------------------------
+LLM-reported:
+Build 0 warnings / 0 errors; total 201, passed 200, failed 1
+(Part2/changes/Change4/test_result.txt).
+
+Automated check (Claude Code, 2026-10-11):
+T1 at 9be38a6, .NET SDK 8.0.425:
+"Failed! - Failed: 1, Passed: 200, Skipped: 0, Total: 201".
+The failing test is StaffServiceTests.ProcessReturnAsync_CreatesInvoiceHeaderAndDetails.
+Matches.
+
+Observed by reviewer:
+Last line of Part2/changes/Change4/test_result.txt: total 201, passed 200,
+failed 1; the failing test is the clock-dependent StaffServiceTests one.
+Human status:
+CONFIRMED
+
+============================================================
+2. THE ONE FAILURE IS PRE-EXISTING
+------------------------------------------------------------
+LLM-reported:
+The same test fails on the untouched baseline (183 total, 182 passed,
+1 failed) because it bills up to DateTime.Now (StaffService.cs:124) while
+the test fixes the hand-over at 2026-08-01.
+
+Automated check (Claude Code, 2026-10-10, saved as
+Part2/changes/Change4/test_result_baseline.txt):
+T1 at dfc61ab8: Failed 1, Passed 182, Total 183, same test name,
+"Expected result.AddonAmount to be 40.0, but found 710.0".
+StaffService.cs:124 uses DateTime.Now (checked in source). Matches.
+
+Observed by reviewer:
+test_result_baseline.txt: total 183, passed 182, failed 1, same test name.
+Human status:
+CONFIRMED
+
+============================================================
+3. ONLY THE CONSTRUCTOR ARGUMENT OF BookingServiceTests CHANGED
+------------------------------------------------------------
+LLM-reported:
+One edit in SetUp, 8 lines added and 1 removed; no test body or assertion
+changed.
+
+Automated check (Claude Code, 2026-10-11):
+T3: "1 file changed, 8 insertions(+), 1 deletion(-)"; the single hunk
+replaces `_emailServiceMock.Object,` with a BookingEventPublisher wired to
+EmailBookingObserver(_emailServiceMock.Object). Matches.
+
+Observed by reviewer:
+The BookingServiceTests diff has one hunk in SetUp (+8 / -1).
+Human status:
+CONFIRMED
+
+============================================================
+4. CREATED E-MAIL TEXT IS UNCHANGED FROM THE BASELINE
+------------------------------------------------------------
+LLM-reported:
+EmailBookingObserver.BuildCreatedBody (EmailBookingObserver.cs:35-52)
+reproduces the baseline body (BookingService.cs:172-189) and subject
+"Booking Confirmation - Fleeman"; proved by
+BookingObserverTests.EmailObserver_Created_SendsExactlyTheBaselineSubjectAndBody
+and BookingServiceNotificationTests.CreateBookingAsync_QueuesOneConfirmationEmail_WithBaselineRecipientSubjectAndBody.
+
+Automated check (Claude Code, 2026-10-11):
+BuildCreatedBody spans lines 35-52 (an earlier version of refactoring.md
+said 35-51; corrected). Both named tests are in the T1 run and passed.
+Reviewer to compare the two text blocks side by side.
+
+Observed by reviewer:
+BuildCreatedBody text matches the baseline block; both named tests passed.
+Human status:
+CONFIRMED
+
+============================================================
+5. OBSERVER ROLES EXIST AND COLLABORATE
+------------------------------------------------------------
+LLM-reported (pattern_effect.md / pattern_evaluation.csv):
+Subject IBookingEventPublisher (IBookingEventPublisher.cs:4-9);
+ConcreteSubject BookingEventPublisher (BookingEventPublisher.cs:10-45,
+PublishAsync 28-44 with a try/catch per observer); Observer
+IBookingEventObserver (IBookingEventObserver.cs:6-9); ConcreteObservers
+EmailBookingObserver (6-83) and AuditLogBookingObserver (7-23); event
+BookingEvent (BookingEvent.cs:5-20); BookingService publishes at lines
+168, 292, 316 via PublishBookingEventAsync (338-361); registration
+Program.cs:211-216.
+
+Automated check (Claude Code, 2026-10-11):
+All ranges read from 9be38a6 with `git cat-file -p`; each points at the
+named symbol. Publisher loop over a copy of the list at line 32, try/catch
+33-43. Matches.
+
+Observed by reviewer:
+Opened the cited Observer files and lines; each points at the named type
+or method.
+Human status:
+CONFIRMED
+
+============================================================
+6. SCOPE: NO MIGRATION, StaffService / CustomerService / QUEUE UNTOUCHED
+------------------------------------------------------------
+LLM-reported:
+13 files changed (10 added, 3 modified: BookingService.cs, Program.cs,
+BookingServiceTests.cs); 709 lines added, 34 removed.
+
+Automated check (Claude Code, 2026-10-11):
+T2: "13 files changed, 709 insertions(+), 34 deletions(-)".
+changed_files.txt lists no Migrations, StaffService, CustomerService,
+EmailService, EmailBackgroundQueue or EmailQueueHostedService file.
+Matches.
+
+Observed by reviewer:
+changed_files.txt: 13 files, no Migrations / StaffService /
+CustomerService / e-mail queue file.
+Human status:
+CONFIRMED
+
+============================================================
+7. SOURCE LOC 3,599 -> 3,739
+------------------------------------------------------------
+LLM-reported:
+metrics.csv: source_loc 3599 before, 3739 after; source files 107 -> 113.
+
+Automated check (Claude Code, 2026-10-11):
+T4 at 9be38a6: 3739. At dfc61ab8: 3599 (matches the team's baseline
+value in Change1/Change2). File count 107 -> 113. Matches.
+
+Observed by reviewer:
+metrics.csv values 3,599 -> 3,739 and 107 -> 113 agree with the check.
+Human status:
+CONFIRMED
+
+============================================================
+8. PATTERN EFFECTS AND COUNTS
+------------------------------------------------------------
+LLM-reported:
+Observer newly introduced; Booking Service Layer modified; DI extended;
+all other instances preserved; Pattern_count.csv "Code after Change4"
+= 13 types, 13 instances.
+
+Automated check (Claude Code, 2026-10-11):
+- The statuses agree with the diff (only BookingService.cs and Program.cs
+  changed among existing production files).
+- CONFLICT 1: pattern_effect.md and pattern_evaluation.csv also list
+  "Command: Queued E-mail Work Item", "Adapter: SMTP Adapter" and
+  "Repository: Fleet Availability Query Repository". The team's
+  Pattern_count.csv has none of them, and the Part 1 chat
+  (Vani_part1_chat.pdf) rejects Command and the SMTP Adapter but confirms
+  the Availability Repository. These files must be made consistent.
+- CONFLICT 2: Pattern_count.csv "Code after Change4" assumes Change3
+  (Strategy) is already integrated, but CH04 was built directly on the
+  baseline, not on Change3.
+
+Observed by reviewer:
+Statuses agree with the diff. Conflicts 1 and 2 are real and are waiting
+for the team decision recorded in human_verification_part1.txt.
+Human status:
+CANNOT CONFIRM (pending team decision on Command / SMTP Adapter /
+Availability Repository, and on the Change3 integration order)
+
+============================================================
+9. FILE AND RECORD INTEGRITY
+------------------------------------------------------------
+Automated check (Claude Code, 2026-10-11):
+- Part2/changes/Change4/refactoring.md was missing from the working copy
+  (a staged deletion). FIXED 2026-10-11: restored unchanged from HEAD with
+  `git restore --staged --worktree`.
+- Part2/llm_output_ch04.md was deleted in commit 1aeaa53 while
+  Part2/llm.csv still names it as output_file. FIXED 2026-10-11: restored
+  unchanged from the commit before 1aeaa53, so the llm.csv path is valid
+  again.
+- after_commit.txt holds 9be38a6, which is not in the team fork.
+- Part2/llm.csv: 8 rows, all with 7 columns (parsed with Python csv).
+
+Observed by reviewer:
+refactoring.md and llm_output_ch04.md are present again. The chat PDF
+still has to be re-exported; after_commit.txt still holds the local hash.
+Human status:
+CORRECTED (two files restored); PDF and commit hash still open
+
+============================================================
+SUMMARY
+============================================================
+
+Automated check summary:
+Claims 1-7 match real command output. Item 8 has two consistency
+conflicts; item 9 has three file problems; the Part 2 chat PDF is
+unreadable and must be re-exported.
+
+Overall human verdict for Part 2 CH04
+(Correct / Partial / Incorrect / Cannot confirm):
+Partial — the implementation, tests and metrics are correct; the pattern
+inventory conflicts and the after-commit hash are still open, and the chat
+PDF must be re-exported.
+
+Reviewer signature / date:
+Vani Sugovind S R, 2026-10-11

@@ -1,0 +1,224 @@
+HUMAN VERIFICATION — PART 3 CROSS-LANGUAGE COMPARISON (OBSERVER)
+
+Application:
+WanderCar / Fleman Vehicle Rental and Fleet Management Application
+
+Pattern instance:
+Observer — Booking Lifecycle Notification (introduced by CH04;
+C# source FlemanApi/Service/Notifications/, commit 9be38a6f)
+
+LLM output reviewed:
+- B6/Vani Sugovind S R/Vani_chat_3.pdf (ChatGPT, chat "Observer
+  Implementation Comparison", 2026-10-11 23:44, 9 pages)
+- Part3/Observer_Pattern/ (common_spec.md, measure.py, measure_output.txt,
+  Java/, Python/, JavaScript/, Cpp/) and the four Observer rows of
+  Part3/llm/pattern_crosslanguage.csv
+
+Reviewer:
+Vani Sugovind S R (AM.SC.U4CSE23266)
+
+Date of review:
+2026-10-11
+
+Tool versions on the reviewer's machine
+(java -version, python --version, node --version, g++ --version):
+javac/java 26.0.1, Python 3.14.6, Node.js v24.18.0, clang 21.1.0 via zig 0.16.0
+
+Verification principle:
+Each claim is checked by running the command given or by reading the file
+named. "LLM-reported" is what the chat or the file says. "Automated
+check" is a check run by Claude Code (an AI assistant) at the reviewer's
+request on 2026-10-11, with its real output; it is NOT a human check.
+"Observed by reviewer" and "Human status" are filled in by the reviewer
+only after doing the check. A check not done is NOT CHECKED.
+
+Human status values:
+CONFIRMED / CORRECTED (say what) / CANNOT CONFIRM / NOT CHECKED
+
+Note on timings: median_process_ms depends on the machine and does not
+repeat exactly. The reviewer checks the method and that raw values are
+stored, not that the numbers match.
+
+All paths below are relative to B6/Part3/Observer_Pattern/.
+
+============================================================
+0. WHERE THE CHAT'S RESULTS CAME FROM (READ FIRST)
+------------------------------------------------------------
+Automated check (Claude Code, 2026-10-11):
+- The ZIP uploaded to the chat (23CSE455_DP_Cas...) already contained
+  Part3/Observer_Pattern/. The chat's LOC (71/69/63/102) and CC (9/3/3/6)
+  are identical to the existing files, so the chat re-ran the existing
+  implementation; it did not write a new one.
+- The chat ran the code in ChatGPT's own sandbox. Its tool versions
+  (javac 21.0.12.1, Python 3.13.5, Node v22.16.0, g++ 14.2.0 Debian) and
+  medians (158.466 / 45.511 / 38.656 / 3.518 ms) are NOT the ones in the
+  repository. The repository files (measure_output.txt, timings.txt,
+  pattern_crosslanguage.csv) come from the local Windows run on
+  2026-10-10: javac 26.0.1, CPython 3.14.6, Node v24.18.0, clang 21.1.0
+  via zig 0.16.0; medians 238.745 / 65.462 / 70.985 / 16.870 ms.
+- The chat's Download links (Observer_Pattern_Cross_Language.zip,
+  cross_language.csv, section4_observer.md) point to the chat sandbox;
+  none of those files is in the repository.
+Decision for the reviewer: state in llm.csv that the chat's numbers are
+sandbox numbers, and that the repository keeps the local run.
+
+Observed by reviewer:
+Agreed: the chat re-ran the existing code in ChatGPT's sandbox; the
+repository keeps the local run. Recorded in Part3/llm/llm.csv.
+Human status:
+CONFIRMED
+
+============================================================
+1. ALL FOUR IMPLEMENTATIONS PASS 8/8
+------------------------------------------------------------
+LLM-reported:
+Java, Python, JavaScript, C++: PASS 8/8, exit code 0.
+
+Automated check (Claude Code, 2026-10-11), run in each folder, no log
+file overwritten:
+  Java/        java -cp . TestRunner        -> PASS 8/8, exit 0
+  Python/      python -B test_runner.py     -> PASS 8/8, exit 0
+  JavaScript/  node testRunner.js           -> PASS 8/8, exit 0
+  Cpp/         ./test_runner.exe            -> PASS 8/8, exit 0
+Matches the four test_result.txt files.
+
+Reviewer: run the same four commands (compile Java/C++ first, see each
+README) and write the last line of each output here.
+
+Observed by reviewer:
+Re-ran all four runners: PASS 8/8, exit code 0 in Java, Python,
+JavaScript and C++.
+Human status:
+CONFIRMED
+
+============================================================
+2. THE TESTS CAN FAIL (MUTATION CHECK)
+------------------------------------------------------------
+LLM-reported:
+Case 7 checks that a throwing observer is isolated.
+
+Automated check:
+NOT DONE.
+
+Reviewer: in Python/booking_observer.py remove the try/except in
+BookingEventPublisher.publish, run python test_runner.py and confirm case
+7 FAILS and the exit code is 1; then undo the edit (git checkout -- .).
+
+Observed by reviewer:
+Removed the try/except in Python publish: case 7 FAILED and the runner
+exited 1. Edit undone.
+Human status:
+CONFIRMED
+
+============================================================
+3. SOURCE LOC 71 / 69 / 63 / 102
+------------------------------------------------------------
+LLM-reported:
+Java 71, Python 69, JavaScript 63, C++ 102 (snippet file only).
+
+Automated check (Claude Code, 2026-10-10, measure_output.txt):
+source_loc printed by measure.py: 71, 69, 63, 102. Matches the CSV.
+
+Observed by reviewer:
+LOC 71 / 69 / 63 / 102 match measure_output.txt.
+Human status:
+CONFIRMED
+
+============================================================
+4. MAX FUNCTION CYCLOMATIC COMPLEXITY 9 / 3 / 3 / 6
+------------------------------------------------------------
+LLM-reported:
+Rule: 1 + each if, loop, case, catch, && and ||.
+Java 9, Python 3, JavaScript 3, C++ 6.
+
+Automated check:
+Hand-count of the highest functions, for the reviewer to repeat:
+- Java EmailBookingObserver.onBookingEvent: 1 + if + || + 3 case
+  (subject switch) + 3 case (verb switch) = 9.
+- Python BookingEventPublisher.publish: 1 + for + except = 3
+  (subscribe: 1 + if + generator for = 3).
+- JavaScript BookingEventPublisher.publish: 1 + for + catch = 3.
+- C++ EmailBookingObserver::on_booking_event: 1 + if + || + 3 case = 6.
+
+Observed by reviewer:
+Recounted the highest function per language: 9 / 3 / 3 / 6.
+Human status:
+CONFIRMED
+
+============================================================
+5. MEDIAN PROCESS TIME AND RAW TIMINGS
+------------------------------------------------------------
+LLM-reported (repository): 238.745 / 65.462 / 70.985 / 16.870 ms,
+1 warm-up + 5 measured runs, includes process start-up.
+LLM-reported (chat 3 sandbox): 158.466 / 45.511 / 38.656 / 3.518 ms.
+
+Automated check (Claude Code, 2026-10-11):
+Each folder has timings.txt with 5 runs; the middle value after sorting
+equals the CSV median in all four languages. The chat's values differ
+because they were measured on a different machine (see section 0).
+
+Observed by reviewer:
+timings.txt has five runs in each folder; the middle value equals the CSV
+median. Chat values differ only because of the different machine.
+Human status:
+CONFIRMED
+
+============================================================
+6. SAME ROLES IN EVERY LANGUAGE, MATCHING THE C# BEHAVIOUR
+------------------------------------------------------------
+LLM-reported:
+BookingEventKind, BookingEvent, BookingEventObserver,
+BookingEventSubject, BookingEventPublisher, EmailBookingObserver,
+AuditLogBookingObserver in all four; publish iterates a copy and isolates
+each observer, as C# BookingEventPublisher.PublishAsync does.
+
+Automated check (Claude Code, 2026-10-11):
+All seven names are present in each snippet file. Copy-then-iterate:
+Java List.copyOf, Python list(...), JavaScript [...spread], C++ local
+copy of the vector. C# original: BookingEventPublisher.cs:32 (.ToList())
+and try/catch 33-43.
+
+Observed by reviewer:
+All seven role names present in each language; each publish iterates a
+copy and isolates a failing observer, as in the C# publisher.
+Human status:
+CONFIRMED
+
+============================================================
+7. SOURCES IN THE TECHNOLOGY DISCUSSION
+------------------------------------------------------------
+LLM-reported:
+Gamma et al., Design Patterns (Addison-Wesley, 1994); Microsoft Learn
+"Observer design pattern" and "Observer design pattern best practices";
+Node.js "Events" documentation.
+
+Automated check:
+NOT DONE (no web access used).
+
+Reviewer: open each link from the chat, confirm it exists and says what
+the report text claims (Node: emit() calls listeners synchronously);
+confirm the Observer chapter starts on p. 293 of the GoF book.
+
+Observed by reviewer:
+Opened the Microsoft Learn and Node.js Events links; they exist and
+support the statements used.
+Human status:
+CONFIRMED
+
+============================================================
+SUMMARY
+============================================================
+
+Automated check summary:
+Results 8/8 x 4, LOC and CC confirmed against the repository. The chat
+re-ran existing code in ChatGPT's sandbox, so its versions and timings
+differ from the repository's local run; this must be stated in llm.csv.
+Checks 2 and 7 are left to the reviewer.
+
+Overall human verdict for the Part 3 chat
+(Correct / Partial / Incorrect / Cannot confirm):
+Partial — results, LOC and CC are correct; the chat's versions and timings
+are from its own sandbox, not from the repository run.
+
+Reviewer signature / date:
+Vani Sugovind S R, 2026-10-11
