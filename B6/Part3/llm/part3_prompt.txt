@@ -88,3 +88,15 @@ Then actually compile and run all four and save each real output as test_result.
 
 Finally give me four CSV rows to append to Part3/llm/pattern_crosslanguage.csv with these columns: pattern_name, instance_name, language, snippet_path, source_loc, max_function_cc, runtime_compiler, test_command, test_result, median_process_ms, language_notes. In language_notes say how each language builds an object from its dependencies, how it keeps the generic type argument (or why it cannot, e.g. Java type erasure), and any language pitfall you hit. Do not delete __pycache__, .class or binary files silently; list them so I can exclude them from the upload.
 
+
+----------------------------
+Analyze the Part 3 cross-language comparison package using only the supplied source files and the Part 2 C# pricing-policy context.
+
+For Strategy and Repository:
+1. Identify the problem, pattern type, participants, and responsibilities.
+2. Compare Java, Python, JavaScript, and C++ implementations.
+3. Identify behavior intended to remain equivalent and language-specific differences.
+4. Separate source facts from interpretation.
+5. Note that Repository is an in-memory CRUD demonstration, not a complete EF Core port.
+6. Recommend verification evidence, including actual command output and runtime/compiler versions.
+Never claim tests passed unless actual run output is included.
