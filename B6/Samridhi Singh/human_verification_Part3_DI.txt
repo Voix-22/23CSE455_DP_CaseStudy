@@ -1,0 +1,490 @@
+HUMAN VERIFICATION — PART 3 CROSS-LANGUAGE COMPARISON (DEPENDENCY INJECTION)
+
+Application:
+WanderCar / Fleman Vehicle Rental and Fleet Management Application
+
+Repository:
+https://github.com/Naveen-verma-7697/FleetManagment
+
+Baseline commit:
+dfc61ab8dd6f9bbb2301171457dc03946a249576
+
+Pattern:
+Dependency Injection / Inversion of Control
+
+Source instance:
+ASP.NET Core DI Composition
+(WanderCar_DotNet/src/FlemanApi/Program.cs:179-214 and constructor-injected
+services such as Service/StaffService.cs:33 and Service/MaintenanceService.cs:19-31)
+
+Implementations reviewed:
+Part3/Dependency_Injection_Pattern/Java/DependencyInjection.java      (test: DependencyInjectionTest.java)
+Part3/Dependency_Injection_Pattern/Python/dependency_injection.py     (test: test_dependency_injection.py)
+Part3/Dependency_Injection_Pattern/JavaScript/dependency_injection.mjs (test: dependency_injection.test.mjs)
+Part3/Dependency_Injection_Pattern/Cpp/dependency_injection.hpp       (test: test_dependency_injection.cpp)
+
+LLM output reviewed:
+Part3/llm/llm.csv (Dependency Injection row)
+Part3/llm/pattern_crosslanguage.csv (four Dependency Injection rows)
+Part3/Dependency_Injection_Pattern/*/README.md
+Test logs of the four runs, dated 2026-10-10:
+  java_dependency_injection_test.log, python_dependency_injection_test.log,
+  javascript_dependency_injection_test.log, cpp_dependency_injection_test.log,
+  dependency_injection_mutation_check.log, timing.log
+
+Verification principle:
+Each LLM claim was checked against the four implementations and the run
+logs. A port is marked CONFIRMED only when the source shows every role of
+the C# instance and the logged tests show the specified behaviour. A claim
+that holds only partly is marked as such, with the correction stated. Class
+names, README text or LLM statements alone are not treated as sufficient
+evidence.
+
+============================================================
+SELECTED INSTANCE
+============================================================
+
+1. SOURCE INSTANCE — ASP.NET CORE DI COMPOSITION
+------------------------------------------------------------
+
+Claim:
+The selected source instance is a confirmed pattern instance, and the
+ports reproduce its roles: registration (composition root), provider with
+lifetimes, and constructor injection.
+
+LLM status:
+CONFIRMED
+
+Human status:
+CONFIRMED
+
+Files inspected:
+- WanderCar_DotNet/src/FlemanApi/Program.cs
+- WanderCar_DotNet/src/FlemanApi/Service/StaffService.cs
+- WanderCar_DotNet/src/FlemanApi/Service/MaintenanceService.cs
+- Part1 human verification (entry 2, Dependency Injection / IoC)
+
+Exact source evidence:
+Program.cs:179 registers the open generic IGenericRepository<,> ->
+GenericRepository<,>. Lines 181-204 register scoped and singleton services,
+and lines 211-214 (CH01) register TimeProvider.System and
+IMaintenanceService. Services receive every dependency through their
+constructors. Part 1 confirmed this instance.
+
+Reason:
+The instance is verified in Part 1 and extended in Part 2. The four ports
+model exactly the features used in Program.cs: lifetimes, open generics,
+constructor injection and last-registration-wins.
+
+Reviewer:
+Samridhi Singh
+
+Date:
+2026-10-11
+
+
+============================================================
+COMMON SPECIFICATION
+============================================================
+
+2. SAME SPECIFICATION AND TEST CASES IN ALL FOUR LANGUAGES
+------------------------------------------------------------
+
+Claim:
+All four implementations run the same 10 cases (D01-D09, D04b) with the
+same error messages.
+
+LLM status:
+CONFIRMED
+
+Human status:
+CONFIRMED
+
+Files inspected:
+- Java/DependencyInjectionTest.java
+- Python/test_dependency_injection.py
+- JavaScript/dependency_injection.test.mjs
+- Cpp/test_dependency_injection.cpp
+
+Exact source evidence:
+Each test file contains exactly 10 test cases (10 @Test methods, 10 test_
+methods, 10 test() calls and 10 TEST() blocks), named D01-D09 and D04b in
+the same order and with the same inputs.
+
+D07 checks: No service for type 'IBookingService' has been registered.
+D08 checks: Cannot resolve scoped service 'IMaintenanceService' from root provider.
+Both strings are identical in every language:
+Java DependencyInjection.java:126 and :131; Python
+dependency_injection.py:87 and :93; JavaScript dependency_injection.mjs:63
+and :68; C++ dependency_injection.hpp:95 and :70.
+
+Reason:
+The specification is shared. The only differences are each language's
+naming convention (for example add_singleton_instance in Python).
+
+Reviewer:
+Samridhi Singh
+
+Date:
+2026-10-11
+
+
+============================================================
+IMPLEMENTATIONS
+============================================================
+
+3. JAVA
+------------------------------------------------------------
+
+Claim:
+The Java port has every role and passes 10/10. Constructor injection uses
+reflection.
+
+LLM status:
+CONFIRMED
+
+Human status:
+CONFIRMED
+
+Files inspected:
+- Java/DependencyInjection.java
+- Java/DependencyInjectionTest.java
+- Java/README.md
+- java_dependency_injection_test.log
+
+Exact source evidence:
+- Lifetime enum: line 29.
+- ServiceCollection: line 36, with addSingletonInstance at :48,
+  addOpenGeneric at :63, add at :75 and findConstructor at :85.
+- Constructor injection: Constructor.newInstance at :94.
+- ServiceProvider: line 104, with open-generic token parsing at :105 and
+  :153, and singleton ownership on the root at :133.
+- The three participants are nested in one public class,
+  DependencyInjection (line 25).
+- Log: "10 tests successful, 0 tests failed" (javac/java 24.0.2, JUnit
+  Platform 1.11.4).
+
+Reason:
+Every role is present and the logged run passes all cases.
+
+Reviewer:
+Samridhi Singh
+
+Date:
+2026-10-11
+
+
+4. PYTHON
+------------------------------------------------------------
+
+Claim:
+The Python port has every role and passes 10/10. Constructor injection
+calls the class like a function.
+
+LLM status:
+CONFIRMED
+
+Human status:
+CONFIRMED
+
+Files inspected:
+- Python/dependency_injection.py
+- Python/test_dependency_injection.py
+- Python/README.md
+- python_dependency_injection_test.log
+
+Exact source evidence:
+- Lifetime: line 21.
+- ServiceCollection: line 36, with add_singleton_instance at :44,
+  add_open_generic at :55 and _add at :65.
+- Constructor injection: implementation(*deps) at :67.
+- ServiceProvider: line 72, with singleton ownership on the root at :95-98
+  and open-generic parsing at :103.
+- Log: "Ran 10 tests ... OK" (CPython 3.13.7, unittest).
+
+Reason:
+Every role is present and the logged run passes all cases.
+
+Reviewer:
+Samridhi Singh
+
+Date:
+2026-10-11
+
+
+5. JAVASCRIPT
+------------------------------------------------------------
+
+Claim:
+The JavaScript port has every role and passes 10/10. Constructor injection
+uses new Impl(...deps).
+
+LLM status:
+CONFIRMED
+
+Human status:
+CONFIRMED
+
+Files inspected:
+- JavaScript/dependency_injection.mjs
+- JavaScript/dependency_injection.test.mjs
+- JavaScript/README.md
+- javascript_dependency_injection_test.log
+
+Exact source evidence:
+- Open-generic token pattern: line 13.
+- ServiceCollection: line 15, with addSingleton/addScoped/addTransient at
+  :19-21 and addOpenGeneric at :25.
+- Constructor injection: new implementation(...deps) at :34.
+- ServiceProvider: line 45, with singleton ownership on the root at :71.
+- Log: "# tests 10, # pass 10, # fail 0" (Node.js v22.18.0, node:test).
+
+Reason:
+Every role is present and the logged run passes all cases. See entry 10
+for running the test inside this repository folder.
+
+Reviewer:
+Samridhi Singh
+
+Date:
+2026-10-11
+
+
+6. C++
+------------------------------------------------------------
+
+Claim:
+The C++ port has every role and passes 10/10, with 0 compiler warnings from
+the project files. Constructor injection is done at compile time with
+variadic templates.
+
+LLM status:
+CONFIRMED
+
+Human status:
+CONFIRMED
+
+Files inspected:
+- Cpp/dependency_injection.hpp
+- Cpp/test_dependency_injection.cpp
+- Cpp/README.md
+- cpp_dependency_injection_test.log
+
+Exact source evidence:
+- Lifetime: line 27.
+- ServiceProvider: line 49, with the type check before the cast at :60
+  (std::type_index), singleton ownership on the root at :72 and
+  open-generic parsing at :84-86.
+- ServiceCollection: addSingletonInstance at :112 and addOpenGeneric at
+  :131.
+- Constructor injection: construct at :158 builds
+  std::make_shared<Impl>(sp.getRequiredService<Deps>(deps[I])...) at :160.
+- Log: "compiler warnings/errors in project files: 0", "# tests 10,
+  # pass 10, # fail 0" (clang 21.1.0 via zig 0.16.0, C++17, -O2 -Wall
+  -Wextra).
+
+Reason:
+Every role is present, the build is clean and the logged run passes all
+cases.
+
+Reviewer:
+Samridhi Singh
+
+Date:
+2026-10-11
+
+
+============================================================
+RESULTS AND MEASUREMENTS
+============================================================
+
+7. DELIBERATE-BUG CHECK
+------------------------------------------------------------
+
+Claim:
+The tests can fail. The same two deliberate bugs, injected into a temporary
+copy of each language, are caught: 8 of 8.
+
+LLM status:
+CONFIRMED
+
+Human status:
+CONFIRMED
+
+Files inspected:
+- dependency_injection_mutation_check.log
+- mutation_check_di.sh
+
+Exact source evidence:
+The log shows "pass" for the 4 unmodified sources, then "KILLED" for all 8
+mutants. Two bugs were injected into each language: singletons cached per
+scope instead of on the root, and the scoped-from-root check removed.
+
+Reason:
+Every injected bug made at least one test fail, so the tests do detect
+these behaviours.
+
+Reviewer:
+Samridhi Singh
+
+Date:
+2026-10-11
+
+
+8. JAVA FIRST-RUN FAILURE AND FIX
+------------------------------------------------------------
+
+Claim:
+Java failed D04b on its first run. addSingleton("X", Foo.class) with no
+dependency arguments matched an addSingleton(String, Object) overload,
+because Java prefers non-varargs overloads, so the Class object was
+registered as the singleton. The overload was renamed addSingletonInstance.
+
+LLM status:
+CONFIRMED
+
+Human status:
+CONFIRMED
+
+Files inspected:
+- Java/DependencyInjection.java (addSingletonInstance at :48 and its comment)
+- Java/DependencyInjectionTest.java (D04b)
+
+Exact source evidence:
+The instance registration is a separately named method, and its comment
+explains the overload rule. The test fixture uses addSingletonInstance for
+the TimeProvider. D04b registers a class with addSingleton and asserts that
+an instance of that class is returned.
+
+Reason:
+The fix is present in the code and D04b now passes.
+
+Reviewer:
+Samridhi Singh
+
+Date:
+2026-10-11
+
+
+9. STATIC AND DYNAMIC MEASUREMENTS
+------------------------------------------------------------
+
+Claim (Java / Python / JavaScript / C++):
+- Source LOC: 110 / 81 / 57 / 122.
+- Max function CC: 7 / 8 / 8 / 7.
+- Median process time: 852.8 / 132.0 / 153.8 / 9.9 ms.
+- Result: PASS 10/10 in each.
+
+LLM status:
+CONFIRMED
+
+Human status:
+CONFIRMED
+
+Files inspected:
+- Part3/llm/pattern_crosslanguage.csv (Dependency Injection rows)
+- timing.log
+- measure.py
+
+Exact source evidence:
+- LOC: non-blank lines that do not start with // (# for Python). Python
+  docstrings are counted; lizard reports 67 NLOC without them.
+- CC: lizard 1.24.1. The maximum is the method that resolves a service in
+  each language.
+- Time: median wall-clock time of 11 runs of the test process, with
+  compile time excluded.
+- The values in the CSV match timing.log.
+
+Reason:
+The values are reproducible with the stated tool and rules. The time is
+dominated by process start-up (JVM, interpreter, Node), not by the pattern
+code. These rules differ from the hand-counted, warm-up-plus-5-runs method
+used for the Factory Method and Observer rows.
+
+Reviewer:
+Samridhi Singh
+
+Date:
+2026-10-11
+
+
+============================================================
+REPOSITORY CHECK
+============================================================
+
+10. RUNNABILITY INSIDE THE TEAM REPOSITORY FOLDER
+------------------------------------------------------------
+
+Claim:
+The llm.csv evaluation is "Partial": the results were obtained in the
+author's original folder layout, and two adjustments are needed before the
+tests can be re-run inside Part3/Dependency_Injection_Pattern.
+
+LLM status:
+PARTIAL
+
+Human status:
+CONFIRMED (the claim of "partial" is correct)
+
+Files inspected:
+- JavaScript/dependency_injection.test.mjs
+- Java/ folder contents
+
+Exact source evidence:
+- dependency_injection.test.mjs lines 3-4 import
+  '../src/dependency_injection.mjs' and '../src/repository.mjs'. Neither
+  path exists in this folder, so node reports ERR_MODULE_NOT_FOUND.
+- The Java folder contains no junit-platform-console-standalone-1.11.4.jar.
+- The source files themselves are byte-identical to the versions that were
+  run and logged.
+
+Reason:
+The code and its results are valid, but the repository copy is not yet
+self-contained. Correction needed: change the JavaScript imports to
+'./dependency_injection.mjs' and supply a repository stand-in (or add
+repository.mjs), and add the JUnit jar or a download step to Java/README.md.
+
+Reviewer:
+Samridhi Singh
+
+Date:
+2026-10-11
+
+
+============================================================
+FINAL HUMAN VERIFICATION SUMMARY
+============================================================
+
+Confirmed:
+9
+
+1. Source instance (ASP.NET Core DI Composition)
+2. Common specification (same 10 cases and messages)
+3. Java port, 10/10
+4. Python port, 10/10
+5. JavaScript port, 10/10
+6. C++ port, 10/10, 0 project warnings
+7. Deliberate-bug check, 8/8 caught
+8. Java first-run failure and fix
+9. Static and dynamic measurements
+
+Partial:
+1
+
+10. Runnability inside the team repository folder (JavaScript imports, Java
+    JUnit jar)
+
+Final decision:
+The Dependency Injection pattern is correctly reproduced in Java, Python,
+JavaScript and C++, with the same roles, the same 10 test cases and the
+same error messages. All four pass 10/10 in the logged runs, and every
+injected bug is caught. The reported measurements match the logs. The only
+correction is practical, not about correctness: the JavaScript test imports
+and the Java JUnit jar must be fixed for the tests to run inside the team
+repository folder.
+
+Human verification completed by:
+Samridhi Singh
+
+Verification date:
+2026-10-11
