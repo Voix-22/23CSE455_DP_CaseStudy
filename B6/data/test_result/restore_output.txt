@@ -1,0 +1,3 @@
+  Determining projects to restore...
+  Restored D:\BHAVANA\AMRITA\S7\design patterns\23CSE455_DP_CaseStudy\A1\data\code\WanderCar_DotNet\src\FlemanApi\FlemanApi.csproj (in 3.01 min).
+  Restored D:\BHAVANA\AMRITA\S7\design patterns\23CSE455_DP_CaseStudy\A1\data\code\WanderCar_DotNet\src\FlemanApi.Tests\FlemanApi.Tests.csproj (in 3.01 min).

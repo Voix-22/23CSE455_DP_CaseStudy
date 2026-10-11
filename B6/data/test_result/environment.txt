@@ -1,0 +1,8 @@
+Captured : 2026-10-11 08:38:52 +05:30
+OS       : Microsoft Windows 11 Pro 10.0.26300.0
+dotnet   : 8.0.425
+SDKs     : 8.0.425 [C:\Program Files\dotnet\sdk]
+Runtimes : 
+           Microsoft.AspNetCore.App 8.0.31 [C:\Program Files\dotnet\shared\Microsoft.AspNetCore.App]
+           Microsoft.NETCore.App 8.0.31 [C:\Program Files\dotnet\shared\Microsoft.NETCore.App]
+           Microsoft.WindowsDesktop.App 8.0.31 [C:\Program Files\dotnet\shared\Microsoft.WindowsDesktop.App]
