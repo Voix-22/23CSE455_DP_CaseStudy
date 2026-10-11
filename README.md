@@ -18,19 +18,6 @@
 | Part analysed | The .NET backend only: `WanderCar_DotNet/src/FlemanApi` and its tests `WanderCar_DotNet/src/FlemanApi.Tests`. The React frontend and the Java backend are out of scope. |
 | Stack | ASP.NET Core 8, EF Core 8 with Pomelo MySQL, AutoMapper, FluentValidation, MailKit, QuestPDF; tests with NUnit 3, Moq, FluentAssertions, EF Core InMemory |
 
-### Source commits
-
-| Version | Commit | Where it is in this repository |
-|---|---|---|
-| Original code (baseline) | `dfc61ab8dd6f9bbb2301171457dc03946a249576`, 2026-08-24, "Clean up comments in IAvailabilityRepository" | `B6/data/code/WanderCar_DotNet` |
-| Change1 on its own | No commit recorded. The author's log shows uncommitted work on top of `dfc61ab8`. | Documents only: `B6/Part2/changes/Change1` (no diff) |
-| Change2 on its own | `7af8d229edfaa1d5c933a0a56aa267a443bece9f` (branch `ch02-vehicle-categories`, author's local clone) | `B6/Part2/changes/Change2/diff.patch` |
-| Change3 on its own | No commit recorded (`Change3/after_commit.txt` says the work was not committed) | `B6/Part2/changes/Change3/diff.patch` |
-| Change4 on its own | `9be38a6ff4cd5b10b813aedb42c3de8a1e82730d` (branch `ch04-booking-notifications`, a local clone) | `B6/Part2/changes/Change4/diff.patch` |
-| Code after Change1 … Change4 (all changes together) | Not a commit of the source repository. Built in this repository from the original code. | `B6/Part2/code/WanderCar_DotNet`; one patch per step in `B6/Part2/changes/integration` |
-
-Commits `7af8d229` and `9be38a6f` exist only in team members' local clones. They are not in the public source repository.
-
 ## 2. Repository layout
 
 ```
