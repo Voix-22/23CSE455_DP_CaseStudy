@@ -1,0 +1,232 @@
+HUMAN VERIFICATION — PART 3 CROSS-LANGUAGE COMPARISON
+
+Application:
+WanderCar / Fleman Vehicle Rental and Fleet Management Application
+
+LLM output reviewed:
+Part3/llm/pattern_crosslanguage.csv (20 rows, 5 patterns)
+Part3/Factory_Method/, Part3/Observer_Pattern/,
+Part3/Dependency_Injection_Pattern/, Part3/strategy_pattern/,
+Part3/repository_pattern/
+LLM record: Part3/llm/llm.csv; prompts: Part3/llm/part3_prompt.txt
+
+Reviewer:
+Bhavana P H (AM.SC.U4CSE23211)
+
+Date of review:
+____________________
+
+Tool versions on the reviewer's machine
+(java -version, python --version, node --version, g++ --version):
+____________________________________________________________
+
+Verification principle:
+Each LLM claim is checked by the reviewer by running the command given
+or by reading the file named. "LLM-reported" is what the LLM recorded.
+"Observed by reviewer" and "Human status" are filled in by the reviewer
+only after doing the check. A check that was not done is marked
+NOT CHECKED, never CONFIRMED.
+
+Human status values:
+CONFIRMED / CORRECTED (say what) / CANNOT CONFIRM / NOT CHECKED
+
+Note on timings: median_process_ms depends on the machine and will not
+repeat exactly. The reviewer checks that the method is the stated one
+and that the raw values are stored, not that the numbers match.
+
+All paths below are relative to B6/Part3/.
+
+============================================================
+1. FACTORY METHOD — VEHICLE CATEGORY RULES CREATION (REVIEWER'S OWN PATTERN)
+============================================================
+
+Claim (LLM-reported):
+  Java        LOC 65   max CC 4   PASS 7/7
+  Python      LOC 51   max CC 2   PASS 7/7
+  JavaScript  LOC 77   max CC 4   PASS 7/7
+  C++         LOC 71   max CC 4   PASS 7/7
+
+How to check (run each in its folder under Factory_Method):
+  Java         javac VehicleCategoryRulesFactory.java TestRunner.java
+               java -cp . TestRunner
+  Python       python test_runner.py
+  Javascript   node testRunner.js
+  Cpp          g++ -std=c++17 -O2 -Wall -Wextra -static -o test_runner.exe test_runner.cpp
+               test_runner.exe
+Expected last line of each: PASS 7/7
+LOC: python measure.py in Factory_Method prints the LOC of each snippet
+(it also rewrites test_result.txt and timings.txt).
+Max CC: count by hand in each create function: 1 + one per case label
+(Python: 1 + one if).
+
+Observed by reviewer:
+  Java        last line: ______________   LOC: ____   CC: ____
+  Python      last line: ______________   LOC: ____   CC: ____
+  JavaScript  last line: ______________   LOC: ____   CC: ____
+  C++         last line: ______________   LOC: ____   CC: ____
+
+Human status:
+____________________
+
+
+============================================================
+2. OBSERVER — BOOKING LIFECYCLE NOTIFICATION
+============================================================
+
+Claim (LLM-reported):
+  Java        LOC 71    max CC 9   PASS 8/8   (javac 26.0.1)
+  Python      LOC 69    max CC 3   PASS 8/8   (CPython 3.14.6)
+  JavaScript  LOC 63    max CC 3   PASS 8/8   (Node.js v24.18.0)
+  C++         LOC 102   max CC 6   PASS 8/8   (clang 21.1.0 via zig)
+
+How to check (run each in its folder under Observer_Pattern):
+  Java         javac BookingEventPublisher.java TestRunner.java
+               java -cp . TestRunner
+  Python       python test_runner.py
+  JavaScript   node testRunner.js
+  Cpp          g++ -std=c++17 -O2 -Wall -Wextra -o test_runner.exe test_runner.cpp
+               test_runner.exe
+Expected last line of each: PASS 8/8
+The reviewer's tool versions differ from the recorded ones; write the
+versions actually used. Do not commit the .class and .exe files.
+
+Observed by reviewer:
+  Java        last line: ______________   version: ______________
+  Python      last line: ______________   version: ______________
+  JavaScript  last line: ______________   version: ______________
+  C++         last line: ______________   version: ______________
+
+Human status:
+____________________
+
+
+============================================================
+3. DEPENDENCY INJECTION — SERVICE REGISTRATION AND CONSTRUCTOR INJECTION
+============================================================
+
+Claim (LLM-reported):
+  Java 110 / CC 7, Python 81 / CC 8, JavaScript 57 / CC 8, C++ 122 / CC 7;
+  PASS 10/10 in all four, in the author's own folder layout.
+  The LLM record says these were NOT re-run in this repository: the
+  JavaScript test imports ../src/ files that are not here, the Java test
+  needs the JUnit jar, and no test logs were uploaded.
+
+How to check:
+  Python       python -m unittest test_dependency_injection
+               (in Dependency_Injection_Pattern\Python)
+  The other three need the author's layout or tools. Ask the author for
+  the test logs, or mark them CANNOT CONFIRM.
+
+Observed by reviewer:
+  Python      result: ____________________________________
+  Java        ____________________________________________
+  JavaScript  ____________________________________________
+  C++         ____________________________________________
+
+Human status:
+____________________
+
+
+============================================================
+4. STRATEGY — VEHICLE RENTAL PRICING POLICY SELECTION
+============================================================
+
+Claim (LLM-reported, strategy_pattern/measure_output.txt):
+  Java 13 / CC 5, Python 58 / CC 5, JavaScript 24 / CC 5, C++ 21 / CC 5.
+  Each program exits with code 0 and prints: Weekend: 360.00
+  Each program has one self-checking example, not a set of test cases.
+
+How to check (in each language folder under strategy_pattern):
+  java         javac -d %TEMP%\strat Main.java   then   java -cp %TEMP%\strat Main
+  python       python main.py
+  javascript   node main.js
+  cpp          g++ -std=c++17 main.cpp -o %TEMP%\strat.exe   then   %TEMP%\strat.exe
+
+Observed by reviewer (line printed):
+  Java ______________  Python ______________  JavaScript ______________  C++ ______________
+
+Human status:
+____________________
+
+
+============================================================
+5. REPOSITORY — IN-MEMORY GENERIC REPOSITORY CRUD
+============================================================
+
+Claim (LLM-reported, repository_pattern/measure_output.txt):
+  Java 11 / CC 6, Python 25 / CC 2, JavaScript 12 / CC 2, C++ 8 / CC 7.
+  Each program exits with code 0 and prints: Repository CRUD: PASS
+  It is an in-memory CRUD demonstration, not a port of the EF Core
+  GenericRepository.
+
+How to check:
+The same four commands as in section 4, in the folders under
+repository_pattern.
+
+Observed by reviewer (line printed):
+  Java ______________  Python ______________  JavaScript ______________  C++ ______________
+
+Human status:
+____________________
+
+
+============================================================
+6. THE CSV AND THE LLM RECORD
+============================================================
+
+6.1 Every snippet_path in pattern_crosslanguage.csv exists.
+How to check: open the CSV; for at least one row per pattern, open the
+file at snippet_path.
+Rows opened: ________________________________________________
+Human status: ____________________
+
+6.2 Part3/llm/llm.csv names only files that exist, except the written
+Strategy/Repository comparison (cross_language_report.md), which is
+stated as not in the repository.
+Human status: ____________________
+
+6.3 part3_prompt.txt contains four prompts, separated by dashed lines:
+Factory Method, Observer, Dependency Injection, Strategy and Repository.
+Human status: ____________________
+
+
+============================================================
+7. KNOWN CORRECTIONS AND GAPS (already recorded by the LLM)
+============================================================
+The reviewer confirms or corrects each line.
+
+7.1 Factory Method paths in the CSV were corrected from
+    Part3/FactoryMethod_VehicleCategoryRules/ to
+    Part3/Factory_Method/.                                     ________
+7.2 Strategy and Repository timings and tool versions first
+    recorded by the author (31 runs, another machine) were
+    replaced by values the LLM measured on 2026-10-11.          ________
+7.3 Repository JavaScript max CC corrected from 1 to 2.         ________
+7.4 Strategy and Repository LOC is not comparable with the
+    other patterns: the Java, JavaScript and C++ files put
+    several statements on one line.                             ________
+7.5 Timings of different patterns come from different
+    machines and include process start-up.                      ________
+7.6 strategy_pattern/ also contains repository/ and strategy/
+    subfolders that are copies of the same eight programs.      ________
+7.7 .class files, __pycache__ and test_runner.exe are
+    generated files, not source.                                ________
+
+============================================================
+REVIEWER'S SUMMARY
+============================================================
+Sections done:
+____________________________________________________________
+
+Sections not done and why:
+____________________________________________________________
+
+Corrections made to the LLM output as a result of this review:
+____________________________________________________________
+____________________________________________________________
+
+Reviewer:
+Bhavana P H
+
+Signature / date:
+____________________
