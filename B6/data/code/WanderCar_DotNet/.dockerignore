@@ -1,0 +1,14 @@
+# Build output — the image rebuilds these inside the build stage.
+**/bin/
+**/obj/
+**/logs/
+
+# Visual Studio metadata
+.vs/
+
+# VCS + docker meta
+.git/
+.gitignore
+Dockerfile
+.dockerignore
+README.md
