@@ -1,0 +1,680 @@
+PART 2 - CHANGE 2 (CH02, "Add new vehicle categories") - PROMPTS GIVEN TO THE LLM
+Owner: Bhavana P H (team B8)
+Tool: Claude Code (model Claude Opus 5.5, claude-opus-5-5), VS Code extension
+Each prompt is reproduced as it was typed, including typing errors. Attached
+images are described in square brackets. The matching rows are in llm.csv.
+
+NOTE ON PROMPT 0
+The step-by-step instruction document that is pasted inside Prompt 1 is itself
+LLM output from an earlier session, which also produced the first, unbuilt
+version of the code (commit b8559ad0851816d8ef6c3e4df4f16e74ae57b572, labelled
+CH01 at the time). The prompt of that earlier session is not available in this
+record. ADD IT HERE AS "PROMPT 0" BEFORE SUBMITTING.
+
+======================================================================
+PROMPT 1  (2026-10-10)  ->  llm.csv row P2-CH02-01
+======================================================================
+[Image attached: the report template page "3 Part 2 Evolution and refactoring"
+with the headings Change and acceptance criteria, Before and after,
+Implementation and tests, Pattern effects, Refactoring, Before/after metrics,
+3.1 Updated pattern counts, Interpretation.]
+
+[Pasted text begins]
+# CH01 - Add new vehicle categories: step-by-step instructions (Bhavana P H)
+
+All code below was written against baseline commit `dfc61ab8` but **has not been compiled or run** (no .NET SDK was available where it was written). Expect to fix small errors when you build. Paths are relative to `WanderCar_DotNet/src/`.
+
+## 1. What the change is
+
+**Baseline.** A "category" is just a row in `car_types` with a name and three rates (seeded: Economy, Compact, Sedan, SUV, Luxury, Minivan). There is no category concept in code, no category-specific rule, and no endpoint to create a car type.
+
+**Requirement.** Introduce a real vehicle category on every car type, with two new categories, **ELECTRIC** and **COMMERCIAL**, alongside **STANDARD** (all existing car types). Each category has its own rules. Staff can create a car type in any category and anyone can list car types by category.
+
+**Category rules (business values chosen by the team - change them if you like, but record them in `requirement.md`):**
+
+| Category | Security deposit | Rate rule |
+|---|---|---|
+| STANDARD | 0 | none |
+| ELECTRIC | 2 x daily rate | none |
+| COMMERCIAL | 5 x daily rate | weekly rate is mandatory |
+
+**Pattern introduced.** A parameterized **Factory Method**: `VehicleCategoryRulesFactory.Create(category)` returns one of three `IVehicleCategoryRules` products. Be honest in the report that this is the parameterized variant (GoF, Factory Method, Implementation note 2), which some texts call Simple Factory; let your reviewer decide the label.
+
+**Acceptance criteria.**
+1. Existing car types keep working and are reported as `STANDARD` with deposit 0.
+2. `POST /api/staff/car-types` (STAFF only) creates a car type in any of the three categories and stores the deposit computed by that category's rules.
+3. A COMMERCIAL car type without a weekly rate is rejected with 400; a duplicate name is rejected with 409.
+4. `GET /api/car-types/category/{category}` returns only car types of that category.
+5. All 183 existing tests pass with no edits to existing test files.
+6. New tests cover the three rule classes, the factory, the service and the validator.
+
+**Deliberately out of scope** (to avoid colliding with CH02 and CH03): pricing, booking, the return invoice, the seed data. `VehicleService` and its tests are not touched.
+
+## 2. Set up
+
+1. Install the .NET 8 SDK and MySQL 8 (or run `docker compose up mysql` from the repo root; note the compose file maps MySQL to host port 3307, so adjust the connection string).
+2. Fork https://github.com/Naveen-verma-7697/FleetManagment to the team's GitHub account and add the other three as collaborators.
+3. Clone it and mark the baseline:
+   ```bash
+   git checkout dfc61ab8dd6f9bbb2301171457dc03946a249576
+   git tag baseline && git push origin baseline
+   git checkout -b evolution baseline && git push -u origin evolution
+   git checkout -b ch01-vehicle-categories baseline
+   ```
+4. Record the "before" evidence **before changing anything**:
+   ```bash
+   cd WanderCar_DotNet
+   dotnet build
+   dotnet test 2>&1 | tee ../baseline_test.log
+   ```
+   Keep `baseline_test.log`; its totals are the "before" row in `metrics.csv` and also Neema's Part 1 run evidence.
+5. Install the EF tool: `dotnet tool install --global dotnet-ef --version 8.*`
+
+## 3. Add the category to the model
+
+**New file `FlemanApi/Models/VehicleCategory.cs`**
+```csharp
+namespace FlemanApi.Models;
+
+public enum VehicleCategory { STANDARD, ELECTRIC, COMMERCIAL }
+```
+
+**Edit `FlemanApi/Models/CarType.cs`** - add two properties after `ImagePath`:
+```csharp
+    public VehicleCategory Category { get; set; } = VehicleCategory.STANDARD;
+    public double SecurityDeposit { get; set; }
+```
+
+**Edit `FlemanApi/Data/FlemanDbContext.cs`** - in `OnModelCreating`, next to the other enum conversions:
+```csharp
+        modelBuilder.Entity<CarType>().Property(c => c.Category)
+            .HasConversion<string>()
+            .HasMaxLength(20)
+            .HasDefaultValue(VehicleCategory.STANDARD);
+```
+
+**Edit `FlemanApi/DTO/CarTypeDTO.cs`** - add after `ImagePath`:
+```csharp
+    public string Category { get; set; } = "STANDARD";
+    public double SecurityDeposit { get; set; }
+```
+`MappingProfile` already maps `CarType <-> CarTypeDTO`; AutoMapper converts enum to string and back by name, so no mapping edit should be needed. Step 8 has a test that proves it; if that test fails, add a `ForMember` like the one used for `Car.Status`.
+
+## 4. Add the category rules and the factory
+
+Create folder `FlemanApi/Service/Categories/`.
+
+**`IVehicleCategoryRules.cs`** (Product)
+```csharp
+using FlemanApi.Models;
+
+namespace FlemanApi.Service.Categories;
+
+public interface IVehicleCategoryRules
+{
+    VehicleCategory Category { get; }
+    double CalculateSecurityDeposit(double dailyRate);
+    IReadOnlyList<string> ValidateRates(double dailyRate, double? weeklyRate, double? monthlyRate);
+}
+```
+
+**`StandardCategoryRules.cs`** (ConcreteProduct)
+```csharp
+using FlemanApi.Models;
+
+namespace FlemanApi.Service.Categories;
+
+public class StandardCategoryRules : IVehicleCategoryRules
+{
+    public VehicleCategory Category => VehicleCategory.STANDARD;
+    public double CalculateSecurityDeposit(double dailyRate) => 0.0;
+    public IReadOnlyList<string> ValidateRates(double dailyRate, double? weeklyRate, double? monthlyRate) =>
+        Array.Empty<string>();
+}
+```
+
+**`ElectricCategoryRules.cs`** (ConcreteProduct)
+```csharp
+using FlemanApi.Models;
+
+namespace FlemanApi.Service.Categories;
+
+public class ElectricCategoryRules : IVehicleCategoryRules
+{
+    private const double DepositMultiplier = 2.0;
+
+    public VehicleCategory Category => VehicleCategory.ELECTRIC;
+    public double CalculateSecurityDeposit(double dailyRate) => dailyRate * DepositMultiplier;
+    public IReadOnlyList<string> ValidateRates(double dailyRate, double? weeklyRate, double? monthlyRate) =>
+        Array.Empty<string>();
+}
+```
+
+**`CommercialCategoryRules.cs`** (ConcreteProduct)
+```csharp
+using FlemanApi.Models;
+
+namespace FlemanApi.Service.Categories;
+
+public class CommercialCategoryRules : IVehicleCategoryRules
+{
+    private const double DepositMultiplier = 5.0;
+
+    public VehicleCategory Category => VehicleCategory.COMMERCIAL;
+    public double CalculateSecurityDeposit(double dailyRate) => dailyRate * DepositMultiplier;
+
+    public IReadOnlyList<string> ValidateRates(double dailyRate, double? weeklyRate, double? monthlyRate)
+    {
+        var errors = new List<string>();
+        if (weeklyRate is null) errors.Add("weeklyRate is required for COMMERCIAL car types");
+        return errors;
+    }
+}
+```
+
+**`VehicleCategoryRulesFactory.cs`** (Creator with the parameterized factory method)
+```csharp
+using System.Net;
+using FlemanApi.Exceptions;
+using FlemanApi.Models;
+
+namespace FlemanApi.Service.Categories;
+
+public interface IVehicleCategoryRulesFactory
+{
+    IVehicleCategoryRules Create(VehicleCategory category);
+}
+
+public class VehicleCategoryRulesFactory : IVehicleCategoryRulesFactory
+{
+    public IVehicleCategoryRules Create(VehicleCategory category) => category switch
+    {
+        VehicleCategory.STANDARD => new StandardCategoryRules(),
+        VehicleCategory.ELECTRIC => new ElectricCategoryRules(),
+        VehicleCategory.COMMERCIAL => new CommercialCategoryRules(),
+        _ => throw new ApiException($"Unsupported vehicle category: {category}", HttpStatusCode.BadRequest),
+    };
+}
+```
+
+## 5. Add the request DTO and validator
+
+**`FlemanApi/DTO/CreateCarTypeRequest.cs`**
+```csharp
+using FlemanApi.Models;
+
+namespace FlemanApi.DTO;
+
+public class CreateCarTypeRequest
+{
+    public string CarTypeName { get; set; } = string.Empty;
+    public VehicleCategory? Category { get; set; }
+    public double? DailyRate { get; set; }
+    public double? WeeklyRate { get; set; }
+    public double? MonthlyRate { get; set; }
+    public string? ImagePath { get; set; }
+}
+```
+
+**`FlemanApi/Validators/CreateCarTypeRequestValidator.cs`** (picked up automatically by `AddValidatorsFromAssembly`)
+```csharp
+using FlemanApi.DTO;
+using FluentValidation;
+
+namespace FlemanApi.Validators;
+
+public class CreateCarTypeRequestValidator : AbstractValidator<CreateCarTypeRequest>
+{
+    public CreateCarTypeRequestValidator()
+    {
+        RuleFor(x => x.CarTypeName)
+            .NotEmpty().WithMessage("carTypeName is required")
+            .MaximumLength(100).WithMessage("carTypeName must be at most 100 characters");
+
+        RuleFor(x => x.Category)
+            .NotNull().WithMessage("category is required")
+            .IsInEnum().WithMessage("category must be STANDARD, ELECTRIC or COMMERCIAL");
+
+        RuleFor(x => x.DailyRate)
+            .NotNull().WithMessage("dailyRate is required")
+            .GreaterThan(0).WithMessage("dailyRate must be greater than 0");
+
+        RuleFor(x => x.WeeklyRate).GreaterThan(0).When(x => x.WeeklyRate is not null)
+            .WithMessage("weeklyRate must be greater than 0");
+        RuleFor(x => x.MonthlyRate).GreaterThan(0).When(x => x.MonthlyRate is not null)
+            .WithMessage("monthlyRate must be greater than 0");
+    }
+}
+```
+
+## 6. Add the service
+
+**`FlemanApi/Service/ICarTypeService.cs`**
+```csharp
+using FlemanApi.DTO;
+using FlemanApi.Models;
+
+namespace FlemanApi.Service;
+
+public interface ICarTypeService
+{
+    Task<CarTypeDTO> CreateCarTypeAsync(CreateCarTypeRequest request);
+    Task<IReadOnlyList<CarTypeDTO>> GetCarTypesByCategoryAsync(VehicleCategory category);
+}
+```
+
+**`FlemanApi/Service/CarTypeService.cs`**
+```csharp
+using System.Net;
+using AutoMapper;
+using FlemanApi.DTO;
+using FlemanApi.Exceptions;
+using FlemanApi.Models;
+using FlemanApi.Repository;
+using FlemanApi.Service.Categories;
+
+namespace FlemanApi.Service;
+
+public class CarTypeService : ICarTypeService
+{
+    private readonly IGenericRepository<CarType, long> _carTypes;
+    private readonly IVehicleCategoryRulesFactory _rulesFactory;
+    private readonly IMapper _mapper;
+
+    public CarTypeService(
+        IGenericRepository<CarType, long> carTypes,
+        IVehicleCategoryRulesFactory rulesFactory,
+        IMapper mapper)
+    {
+        _carTypes = carTypes;
+        _rulesFactory = rulesFactory;
+        _mapper = mapper;
+    }
+
+    public async Task<CarTypeDTO> CreateCarTypeAsync(CreateCarTypeRequest request)
+    {
+        var name = request.CarTypeName.Trim();
+        var lower = name.ToLower();
+        if (await _carTypes.ExistsAsync(c => c.CarTypeName.ToLower() == lower))
+        {
+            throw new ApiException($"A car type with this name already exists: {name}", HttpStatusCode.Conflict);
+        }
+
+        var rules = _rulesFactory.Create(request.Category!.Value);
+        var dailyRate = request.DailyRate!.Value;
+
+        var errors = rules.ValidateRates(dailyRate, request.WeeklyRate, request.MonthlyRate);
+        if (errors.Count > 0)
+        {
+            throw new ApiException(string.Join(", ", errors), HttpStatusCode.BadRequest);
+        }
+
+        var carType = new CarType
+        {
+            CarTypeName = name,
+            DailyRate = dailyRate,
+            WeeklyRate = request.WeeklyRate,
+            MonthlyRate = request.MonthlyRate,
+            ImagePath = request.ImagePath,
+            Category = rules.Category,
+            SecurityDeposit = rules.CalculateSecurityDeposit(dailyRate),
+        };
+
+        await _carTypes.AddAsync(carType);
+        await _carTypes.SaveChangesAsync();
+        return _mapper.Map<CarTypeDTO>(carType);
+    }
+
+    public async Task<IReadOnlyList<CarTypeDTO>> GetCarTypesByCategoryAsync(VehicleCategory category)
+    {
+        var carTypes = await _carTypes.FindAsync(c => c.Category == category);
+        return _mapper.Map<List<CarTypeDTO>>(carTypes);
+    }
+}
+```
+
+## 7. Add the controller and register everything
+
+**`FlemanApi/Controllers/CarTypeController.cs`** - a new controller on purpose: `VehicleController` has `[AllowAnonymous]` on the class, and a class-level `[AllowAnonymous]` overrides `[Authorize]` on an action, so a staff-only action cannot live there.
+```csharp
+using FlemanApi.DTO;
+using FlemanApi.Models;
+using FlemanApi.Service;
+using Microsoft.AspNetCore.Authorization;
+using Microsoft.AspNetCore.Mvc;
+
+namespace FlemanApi.Controllers;
+
+[ApiController]
+public class CarTypeController : ControllerBase
+{
+    private readonly ICarTypeService _carTypeService;
+
+    public CarTypeController(ICarTypeService carTypeService)
+    {
+        _carTypeService = carTypeService;
+    }
+
+    [HttpGet("api/car-types/category/{category}")]
+    [AllowAnonymous]
+    public async Task<IActionResult> GetByCategory(VehicleCategory category) =>
+        Ok(await _carTypeService.GetCarTypesByCategoryAsync(category));
+
+    [HttpPost("api/staff/car-types")]
+    [Authorize(Roles = "STAFF")]
+    public async Task<IActionResult> CreateCarType([FromBody] CreateCarTypeRequest request) =>
+        Ok(await _carTypeService.CreateCarTypeAsync(request));
+}
+```
+
+**Edit `FlemanApi/Program.cs`** - after the line that registers `IBookingService` (line 187 at baseline) add:
+```csharp
+// ---- CH01: vehicle categories -------------------------------------------
+builder.Services.AddSingleton<FlemanApi.Service.Categories.IVehicleCategoryRulesFactory,
+    FlemanApi.Service.Categories.VehicleCategoryRulesFactory>();
+builder.Services.AddScoped<ICarTypeService, CarTypeService>();
+```
+
+## 8. Add the tests
+
+Create these in `FlemanApi.Tests/`. Do not edit any existing test file.
+
+**`Services/VehicleCategoryRulesTests.cs`**
+```csharp
+using FlemanApi.Exceptions;
+using FlemanApi.Models;
+using FlemanApi.Service.Categories;
+using FluentAssertions;
+
+namespace FlemanApi.Tests.Services;
+
+[TestFixture]
+public class VehicleCategoryRulesTests
+{
+    private readonly VehicleCategoryRulesFactory _factory = new();
+
+    [Test]
+    public void Create_ReturnsMatchingRulesForEachCategory()
+    {
+        _factory.Create(VehicleCategory.STANDARD).Should().BeOfType<StandardCategoryRules>();
+        _factory.Create(VehicleCategory.ELECTRIC).Should().BeOfType<ElectricCategoryRules>();
+        _factory.Create(VehicleCategory.COMMERCIAL).Should().BeOfType<CommercialCategoryRules>();
+    }
+
+    [Test]
+    public void Create_EveryEnumValueIsSupportedAndReportsItsOwnCategory()
+    {
+        foreach (var category in Enum.GetValues<VehicleCategory>())
+        {
+            _factory.Create(category).Category.Should().Be(category);
+        }
+    }
+
+    [Test]
+    public void Create_UnknownCategory_ThrowsApiException()
+    {
+        var act = () => _factory.Create((VehicleCategory)999);
+        act.Should().Throw<ApiException>();
+    }
+
+    [Test]
+    public void Standard_HasNoDepositAndNoRateRule()
+    {
+        var rules = new StandardCategoryRules();
+        rules.CalculateSecurityDeposit(100.0).Should().Be(0.0);
+        rules.ValidateRates(100.0, null, null).Should().BeEmpty();
+    }
+
+    [Test]
+    public void Electric_DepositIsTwiceTheDailyRate()
+    {
+        var rules = new ElectricCategoryRules();
+        rules.CalculateSecurityDeposit(60.0).Should().Be(120.0);
+        rules.ValidateRates(60.0, null, null).Should().BeEmpty();
+    }
+
+    [Test]
+    public void Commercial_DepositIsFiveTimesTheDailyRate()
+    {
+        new CommercialCategoryRules().CalculateSecurityDeposit(80.0).Should().Be(400.0);
+    }
+
+    [Test]
+    public void Commercial_RequiresWeeklyRate()
+    {
+        var rules = new CommercialCategoryRules();
+        rules.ValidateRates(80.0, null, null).Should().ContainSingle();
+        rules.ValidateRates(80.0, 500.0, null).Should().BeEmpty();
+    }
+}
+```
+
+**`Services/CarTypeServiceTests.cs`**
+```csharp
+using System.Net;
+using FlemanApi.DTO;
+using FlemanApi.Exceptions;
+using FlemanApi.Models;
+using FlemanApi.Service;
+using FlemanApi.Service.Categories;
+using FlemanApi.Tests.TestHelpers;
+using FluentAssertions;
+
+namespace FlemanApi.Tests.Services;
+
+[TestFixture]
+public class CarTypeServiceTests
+{
+    private List<CarType> _carTypes = null!;
+    private CarTypeService _service = null!;
+
+    [SetUp]
+    public void SetUp()
+    {
+        _carTypes = new List<CarType>
+        {
+            new() { CarTypeId = 1, CarTypeName = "Sedan", DailyRate = 30.0 },
+            new() { CarTypeId = 2, CarTypeName = "City EV", DailyRate = 60.0, Category = VehicleCategory.ELECTRIC, SecurityDeposit = 120.0 },
+        };
+        var repo = MockRepositoryFactory.Create<CarType, long>(_carTypes, ct => ct.CarTypeId, (ct, id) => ct.CarTypeId = id);
+        _service = new CarTypeService(repo.Object, new VehicleCategoryRulesFactory(), TestMapperFactory.Create());
+    }
+
+    [Test]
+    public async Task CreateCarTypeAsync_Electric_StoresCategoryAndDeposit()
+    {
+        var dto = await _service.CreateCarTypeAsync(new CreateCarTypeRequest
+        {
+            CarTypeName = "Premium EV", Category = VehicleCategory.ELECTRIC, DailyRate = 90.0,
+        });
+
+        dto.Category.Should().Be("ELECTRIC");
+        dto.SecurityDeposit.Should().Be(180.0);
+        _carTypes.Should().HaveCount(3);
+    }
+
+    [Test]
+    public async Task CreateCarTypeAsync_Commercial_WithWeeklyRate_Succeeds()
+    {
+        var dto = await _service.CreateCarTypeAsync(new CreateCarTypeRequest
+        {
+            CarTypeName = "Cargo Van", Category = VehicleCategory.COMMERCIAL, DailyRate = 80.0, WeeklyRate = 500.0,
+        });
+
+        dto.Category.Should().Be("COMMERCIAL");
+        dto.SecurityDeposit.Should().Be(400.0);
+    }
+
+    [Test]
+    public async Task CreateCarTypeAsync_Commercial_WithoutWeeklyRate_ThrowsBadRequest()
+    {
+        var act = () => _service.CreateCarTypeAsync(new CreateCarTypeRequest
+        {
+            CarTypeName = "Cargo Van", Category = VehicleCategory.COMMERCIAL, DailyRate = 80.0,
+        });
+
+        (await act.Should().ThrowAsync<ApiException>()).Which.Status.Should().Be(HttpStatusCode.BadRequest);
+        _carTypes.Should().HaveCount(2);
+    }
+
+    [Test]
+    public async Task CreateCarTypeAsync_DuplicateName_ThrowsConflict()
+    {
+        var act = () => _service.CreateCarTypeAsync(new CreateCarTypeRequest
+        {
+            CarTypeName = "sedan", Category = VehicleCategory.STANDARD, DailyRate = 30.0,
+        });
+
+        (await act.Should().ThrowAsync<ApiException>()).Which.Status.Should().Be(HttpStatusCode.Conflict);
+    }
+
+    [Test]
+    public async Task CreateCarTypeAsync_Standard_HasZeroDeposit()
+    {
+        var dto = await _service.CreateCarTypeAsync(new CreateCarTypeRequest
+        {
+            CarTypeName = "Hatchback", Category = VehicleCategory.STANDARD, DailyRate = 18.0,
+        });
+
+        dto.Category.Should().Be("STANDARD");
+        dto.SecurityDeposit.Should().Be(0.0);
+    }
+
+    [Test]
+    public async Task GetCarTypesByCategoryAsync_ReturnsOnlyThatCategory()
+    {
+        var electric = await _service.GetCarTypesByCategoryAsync(VehicleCategory.ELECTRIC);
+        var standard = await _service.GetCarTypesByCategoryAsync(VehicleCategory.STANDARD);
+
+        electric.Should().ContainSingle().Which.CarTypeName.Should().Be("City EV");
+        standard.Should().ContainSingle().Which.CarTypeName.Should().Be("Sedan");
+    }
+
+    [Test]
+    public void Mapping_ExistingCarTypeWithoutCategory_IsReportedAsStandard()
+    {
+        var dto = TestMapperFactory.Create().Map<CarTypeDTO>(new CarType { CarTypeId = 9, CarTypeName = "SUV", DailyRate = 40.0 });
+
+        dto.Category.Should().Be("STANDARD");
+        dto.SecurityDeposit.Should().Be(0.0);
+    }
+}
+```
+
+**`Validators/CreateCarTypeRequestValidatorTests.cs`** - open `Validators/AirportRequestValidatorTests.cs` and copy its style. Cover: valid request passes; empty name fails; null category fails; null or zero daily rate fails; negative weekly rate fails.
+
+## 9. Create the migration
+
+MySQL must be running, because `Program.cs` calls `ServerVersion.AutoDetect` with the connection string.
+```bash
+cd WanderCar_DotNet/src/FlemanApi
+dotnet ef migrations add AddVehicleCategory
+```
+Open the generated migration and check both columns:
+- `Category`: `nullable: false`, `defaultValue: "STANDARD"`. If the default is `""`, fix it by hand, otherwise existing rows will fail to load.
+- `SecurityDeposit`: `nullable: false`, `defaultValue: 0.0`.
+
+The app applies migrations at start-up. The seeder only runs on an empty database, so your existing rows are simply upgraded to STANDARD.
+
+## 10. Build, test, try it
+
+```bash
+cd WanderCar_DotNet
+dotnet build
+dotnet test 2>&1 | tee ch01_test.log
+cd src/FlemanApi && dotnet run
+```
+In Swagger (`http://localhost:5180/swagger`):
+1. `POST /api/auth/staff-login` with the staff credentials in the repo README; copy the token into Authorize.
+2. `POST /api/staff/car-types` with `{"carTypeName":"City EV","category":"ELECTRIC","dailyRate":60}`; expect `securityDeposit: 120`.
+3. Same call with `"category":"COMMERCIAL"` and no `weeklyRate`; expect 400.
+4. Same call without the token; expect 401.
+5. `GET /api/car-types/category/ELECTRIC` and `GET /api/car-types`; existing types show `category: "STANDARD"`.
+
+Take screenshots of 2 to 5.
+
+## 11. Commit and integrate
+
+```bash
+git add -A
+git commit -m "CH01: add vehicle categories (ELECTRIC, COMMERCIAL) with category rules factory"
+git checkout evolution && git merge --ff-only ch01-vehicle-categories
+git tag ch01 && git push origin evolution ch01
+```
+Tell Neema `ch01` is tagged so CH02 can rebase on it.
+
+## 12. Evidence for `Part2/changes/Change1/`
+
+Run from the repo root:
+```bash
+git rev-parse baseline                               > before_commit.txt
+git rev-parse ch01                                   > after_commit.txt
+git diff --name-status baseline ch01                 > changed_files.txt
+git diff baseline ch01 -- WanderCar_DotNet           > diff.patch
+cp WanderCar_DotNet/ch01_test.log                      test_result.txt
+```
+
+**`requirement.md`**: section 1 of this file.
+
+**`metrics.csv`**: run the LOC command below at `baseline` and at `ch01` (use `git checkout`), and take test totals from the two real logs.
+```bash
+cd WanderCar_DotNet/src/FlemanApi
+find . -name '*.cs' -not -path './obj/*' -not -path './bin/*' -not -path './Migrations/*' \
+  | xargs cat | grep -vE '^\s*$' | grep -vE '^\s*//' | wc -l
+```
+```csv
+metric,scope,before,after,tool
+source_loc,FlemanApi excluding Migrations obj bin,<run>,<run>,find + grep + wc
+source_files,FlemanApi excluding Migrations obj bin,107,<run>,find + wc
+tests_total,FlemanApi.Tests,<from log>,<from log>,dotnet test
+tests_passed,FlemanApi.Tests,<from log>,<from log>,dotnet test
+```
+I counted 3,599 lines and 107 files at baseline with this rule; confirm it on your machine rather than copying my number.
+
+**`pattern_effect.md`**: fill in after Neema freezes the Part 1 instance names. Expected content:
+
+| Pattern instance | Status after CH01 | Reason |
+|---|---|---|
+| Factory Method (parameterized) - Vehicle Category Rules Creation | newly_introduced | Creator `VehicleCategoryRulesFactory.Create`; Product `IVehicleCategoryRules`; ConcreteProducts `StandardCategoryRules`, `ElectricCategoryRules`, `CommercialCategoryRules`; Client `CarTypeService.CreateCarTypeAsync` |
+| Repository - Generic Entity Repository | extended | New client `CarTypeService`; interface and implementation unchanged |
+| Data Transfer Object - Entity-to-DTO Mapping | modified | `CarTypeDTO` gains `Category` and `SecurityDeposit`; new `CreateCarTypeRequest` |
+| Dependency Injection | extended | Two new registrations in `Program.cs` |
+| Chain of Responsibility, Producer-Consumer, Adapter, other instances | preserved | Not touched |
+
+Add file and line ranges from the `ch01` commit for every participant.
+
+**`refactoring.md`**: CH01 is additive. Write that no existing code was refactored in this change, and that behaviour preservation is shown by the unchanged existing tests passing. Do not invent a refactoring; the team's refactoring evidence comes from CH02 and CH04.
+
+**LLM record**: these instructions are LLM output. Save them as the raw output, save your prompt, and add a row to `Part2/llm.csv`. A teammate records which parts were correct after you build and test (for example, any snippet above that needed fixing).
+[Pasted text ends]
+
+its not change 1, its change 2 btw
+
+
+use the above text to understand what is to be done in this project and give me the results . also give me the text answers in the image to be written for report. ITS CHANGE 2 not change 1
+
+======================================================================
+PROMPT 2  (2026-10-10)  ->  llm.csv row P2-CH02-02
+======================================================================
+[Pasted text begins]
+\entry{Change and acceptance criteria}{Requirement and observable expected results}
+\entry{Before and after}{Exact commits and changed source paths}
+\entry{Implementation and tests}{What changed; run command; actual test result and log path}
+\entry{Pattern effects}{Instance name; preserved / modified / extended / replaced / removed / newly introduced; reason}
+\entry{Refactoring}{Real code smell, technique, diff and behavior-preservation evidence}
+\entry{Before/after metrics}{Same measurement scope and tool; source LOC and actual test results; missing measures explained}
+\subsection{Updated pattern counts}
+\help{For each snapshot record distinct pattern types, instances, concrete participant classes and rejected/uncertain observations. Keep the instance name when its collaboration continues. For replacement/new collaboration, name it and explain its relationship to the previous one.}
+\entry{Interpretation}{Benefits, trade-offs and remaining limitations; more or fewer LOC alone does not prove better design}
+[Pasted text ends]
+
+give thuis
+
+======================================================================
+PROMPT 3  (2026-10-11)  ->  llm.csv row P2-CH02-03
+======================================================================
+[Image attached: part of the required submission folder tree showing
+Pattern_count.csv, diagrams ("updated UML where needed"), Part2_prompt.text
+and llm.csv.]
+
+give me diagrams, llm.csv and part2.prompt for PART 2 CHANGE 2
