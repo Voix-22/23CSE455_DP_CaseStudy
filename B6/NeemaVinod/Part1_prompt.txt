@@ -1,0 +1,199 @@
+PART 1 — DESIGN PATTERN DISCOVERY PROMPT
+
+Case Study:
+Design Pattern Identification and Evolution in an ASP.NET Core-Based Vehicle Rental Application
+
+Application:
+WanderCar / Fleman Vehicle Rental and Fleet Management Application
+
+Repository:
+https://github.com/Naveen-verma-7697/FleetManagment
+
+Baseline branch:
+main
+
+Baseline commit:
+dfc61ab8dd6f9bbb2301171457dc03946a249576
+
+Source being analyzed:
+WanderCar_DotNet/src/FlemanApi
+
+Objective:
+Identify and document the design-pattern collaborations that actually
+exist in the supplied ASP.NET Core vehicle-rental application.
+
+Functional scope:
+1. Vehicle management
+2. Customer management
+3. Reservation / booking
+4. Pricing
+5. Payment / billing
+6. Maintenance
+7. Notification
+8. Authentication
+
+Instructions:
+
+1. Analyze ONLY the supplied source code and source context.
+
+2. Do not invent a design pattern merely because:
+   - a class has a familiar name,
+   - dependency injection is used,
+   - an interface exists,
+   - a framework provides a feature,
+   - or the pattern would be a good design choice.
+
+3. Identify actual pattern collaborations supported by the source.
+
+4. Consider patterns from:
+   - GoF
+   - GRASP
+   - Architectural patterns
+   - Concurrency patterns
+   - Framework idioms
+   - Integration patterns
+
+5. For every candidate pattern, provide:
+
+   a. Pattern name
+   b. Pattern category/type
+   c. Meaningful instance name
+   d. Purpose/problem being solved
+   e. Origin:
+      - application
+      - framework
+      - dependency
+      - external integration
+   f. All applicable participant roles
+   g. Actual class/interface/function corresponding to each role
+   h. Exact source file path
+   i. Exact line range wherever possible
+   j. Relationships/calls/delegation between participants
+   k. Evidence from the source
+   l. Confidence level
+   m. Status:
+      CONFIRMED / REJECTED / UNCERTAIN
+
+6. Do not treat a class name, annotation, or LLM assertion alone
+   as sufficient evidence.
+
+7. If a candidate pattern is not actually implemented, explicitly
+   reject it and explain why.
+
+8. Pay special attention to:
+   - Repository/data-access collaborations
+   - Service-layer collaborations
+   - ASP.NET Core middleware
+   - Email/background processing
+   - Dependency injection/composition
+   - Legacy Java integration
+   - Pricing calculation
+   - Authentication/security
+   - Vehicle availability and maintenance
+
+9. For Repository candidates, identify all applicable participants,
+   including repository interfaces, concrete repositories, services,
+   controllers, and persistence/context components where relevant.
+
+10. For middleware or Chain of Responsibility candidates, identify
+    the actual middleware classes, RequestDelegate/_next relationships,
+    and request pipeline order.
+
+11. For Producer–Consumer/background processing candidates, identify
+    the producer, queue/channel, consumer/hosted service and sender.
+
+12. For Proxy/integration candidates, identify the abstraction,
+    concrete client/proxy, caller and external/legacy endpoint.
+
+13. For Service Layer candidates, identify controller, service
+    interface, concrete service and persistence dependencies.
+
+14. For authentication/security, distinguish framework configuration
+    from a genuine application design-pattern collaboration.
+
+15. Do not claim that Strategy exists in baseline pricing unless the
+    source actually contains interchangeable pricing policy
+    implementations.
+
+16. Do not claim Factory, Observer, Singleton, Adapter, Strategy,
+    or any other pattern unless there is source evidence supporting
+    the actual collaboration.
+
+17. Produce the response in the following sections:
+
+SECTION A — APPLICATION ARCHITECTURE
+Briefly describe the relevant architecture and request/data flows.
+
+SECTION B — CONFIRMED PATTERNS
+For each confirmed pattern give:
+- Pattern
+- Category
+- Instance name
+- Intent
+- Participants
+- Source locations
+- Evidence
+- Origin
+- Confidence
+
+SECTION C — REJECTED CANDIDATES
+For each rejected candidate:
+- Pattern
+- Why it may initially appear applicable
+- Why the supplied source does not actually confirm it
+- Source evidence
+
+SECTION D — UNCERTAIN CANDIDATES
+List candidates that cannot be confirmed from the supplied source
+and explain what additional evidence would be required.
+
+SECTION E — PATTERN COUNT
+Give:
+- Number of distinct confirmed pattern types
+- Number of confirmed pattern collaborations/instances
+- Number of concrete participant classes/symbols where applicable
+
+Do NOT count rejected or uncertain candidates as confirmed patterns.
+
+SECTION F — PATTERN-TO-SOURCE TABLE
+Create a table:
+
+Pattern |
+Instance |
+Pattern Type |
+Participant Role |
+Actual Class/Interface/Function |
+File |
+Line Range |
+Evidence
+
+SECTION G — UML/DIAGRAM RECOMMENDATIONS
+For every confirmed pattern, recommend what UML/component diagram
+should be created and identify the participants that must appear.
+
+SECTION H — FINAL PART 1 DATA
+Provide a CSV-ready table for patterns.csv using these columns:
+
+source_version,
+pattern_name,
+pattern_type,
+instance_name,
+participant_roles,
+source_locations,
+intent_and_evidence
+
+Also provide a CSV-ready pattern count table using:
+
+source_version,
+summary,
+pattern_name,
+count
+
+Important:
+Do not fabricate line numbers. If exact line numbers cannot be
+confirmed from the supplied source, state "line range requires
+manual verification".
+
+The final result must be based on the supplied source code, not on
+generic knowledge about how an ideal vehicle-rental application
+should be designed.

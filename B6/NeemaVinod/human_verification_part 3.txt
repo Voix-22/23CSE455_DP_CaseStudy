@@ -1,0 +1,125 @@
+HUMAN VERIFICATION RECORD — PART 3
+
+Case Study: Design Pattern Identification and Evolution in an ASP.NET Core-Based Vehicle Rental Application
+
+Application: WanderCar / Fleman Vehicle Rental and Fleet Management Application
+
+Part: Part 3 — Cross-Language Design Pattern Comparison
+
+Patterns: Strategy and Repository
+
+Languages: C#, Java, Python, JavaScript, and C++
+
+Verification Date: 11/10/2026
+
+Reviewer Name/Initials: Neema Vinod
+
+
+1. Purpose of Verification
+
+The purpose of human verification is to check whether the Part 3 analysis accurately represents the supplied source code, whether the implementations follow the intended Strategy and Repository patterns, and whether equivalent behaviour is maintained across the programming languages.
+
+The verification also checks the accuracy of test results, measurements, language comparisons, and conclusions presented in the report.
+
+
+2. Source Code Verification
+
+| Verification item | Evidence to inspect | Status |
+|---|---|---|
+| Original C# Strategy implementation | RentalRateCalculator.cs and relevant Part 2 pricing-policy files | Pending |
+| Strategy implementation in Java | Java strategy interface, concrete strategies, and calling code | Pending |
+| Strategy implementation in Python | Python strategy implementations and calling code | Pending |
+| Strategy implementation in JavaScript | JavaScript strategy implementations and calling code | Pending |
+| Strategy implementation in C++ | C++ headers, implementations, and calling code | Pending |
+| Original C# Repository implementation | IGenericRepository.cs, GenericRepository.cs, and FlemanDbContext.cs | Pending |
+| Repository implementation in Java | Repository contract, implementation, and storage logic | Pending |
+| Repository implementation in Python | Repository contract or equivalent, implementation, and storage logic | Pending |
+| Repository implementation in JavaScript | Repository implementation and storage logic | Pending |
+| Repository implementation in C++ | Repository headers, implementations, and storage logic | Pending |
+
+Verification rule: Mark an item as verified only after inspecting the corresponding source files. If a file is unavailable, mark the item as blocked or not verified.
+
+
+3. Design Pattern Verification
+
+| Verification item | Expected check | Status |
+|---|---|---|
+| Strategy pattern identification | Confirm interchangeable pricing algorithms and their actual relationships | Pending |
+| Strategy contract | Confirm how each language defines or represents the policy contract | Pending |
+| Concrete strategies | Check that the implementations provide the required pricing behaviour | Pending |
+| Strategy selection | Verify policy-selection logic and precedence where applicable | Pending |
+| Calling services | Check how callers obtain and invoke the selected policy | Pending |
+| Repository pattern identification | Confirm separation between repository operations and calling code | Pending |
+| Repository operations | Verify supported create, read, update, and delete operations | Pending |
+| Persistence behaviour | Determine whether each implementation uses in-memory storage or database-backed persistence | Pending |
+
+
+4. Cross-Language Behaviour Verification
+
+The reviewer should compare each implementation against the common specification and the original C# reference.
+
+Strategy pattern
+
+- [ ] Verify standard rental pricing.
+- [ ] Verify weekend surcharge calculations.
+- [ ] Verify seasonal pricing rules.
+- [ ] Verify policy-selection precedence.
+- [ ] Verify boundary cases, such as rental intervals crossing weekends or seasonal months.
+- [ ] Check that all implementations use consistent inputs and expected outputs.
+- [ ] Record any differences in behaviour.
+
+Repository pattern
+
+- [ ] Verify create operations.
+- [ ] Verify retrieval of existing records.
+- [ ] Verify behaviour when records do not exist.
+- [ ] Verify update operations.
+- [ ] Verify delete operations.
+- [ ] Check invalid-input and error-handling behaviour.
+- [ ] Determine whether storage behaviour is equivalent across languages.
+- [ ] Record differences between in-memory storage and database-backed persistence.
+
+Note: Similar method names do not establish equivalent behaviour. The reviewer must inspect the implementation and, where possible, verify the output using tests.
+
+
+5. Test and Execution Verification
+
+| Verification item | Evidence required | Status |
+|---|---|---|
+| Java tests | Actual test command and execution output | Pending |
+| Python tests | Actual test command and execution output | Pending |
+| JavaScript tests | Actual test command and execution output | Pending |
+| C++ tests | Actual build/test commands and execution output | Pending |
+| Strategy test coverage | Tests for standard, weekend, and seasonal pricing where applicable | Pending |
+| Repository test coverage | Tests for supported CRUD operations and edge cases | Pending |
+| Reported pass/fail counts | Comparison with the original test logs | Pending |
+| Compiler/interpreter versions | Actual version-command output | Pending |
+
+Record the actual command, environment, and results for each language. Do not mark tests as passed based only on the presence of test files or a README.
+
+
+6. Metrics Verification
+
+| Metric | Verification required | Status |
+|---|---|---|
+| Lines of code (LOC) | Check counting method, included files, and reported totals | Pending |
+| Cyclomatic complexity (CC) | Check tool or calculation method and measurement scope | Pending |
+| Test counts | Compare reported totals with actual test output | Pending |
+| Runtime measurements | Check input data, repetitions, environment, and timing method | Pending |
+| Tool versions | Confirm compiler, interpreter, and measurement-tool versions | Pending |
+
+If a metric was not measured or its evidence is unavailable, record it as Not measured or Evidence not supplied. Do not estimate values and present them as measured results.
+
+
+7. Report and CSV Verification
+
+- [ ] Confirm that the report refers to the correct source files.
+- [ ] Check that language-specific claims are supported by the implementations.
+- [ ] Verify that equivalent, partially equivalent, non-equivalent, and unverified behaviours are classified correctly.
+- [ ] Confirm that missing source files and evidence are explicitly identified.
+- [ ] Verify that the report distinguishes source inspection from actual test execution.
+- [ ] Check that the existing pattern_crosslanguage.csv column names and schema are preserved.
+- [ ] Confirm that CSV values are correctly escaped and can be imported without corruption.
+- [ ] Check that no unsupported source paths, metrics, test results, or conclusions have been introduced.
+
+

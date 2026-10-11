@@ -1,0 +1,61 @@
+Human Verification Record
+
+Case Study: Design Pattern Identification and Evolution in an ASP.NET Core-Based Vehicle Rental Application
+
+Application: WanderCar / Fleman Vehicle Rental and Fleet Management Application
+
+Part: Part 2 — Design Pattern Evolution and Refactoring
+
+Change: CH03 — Interchangeable Rental Pricing Policies
+
+Pattern: Strategy
+
+Verification date: 11/10/2026
+
+Reviewer: Neema Vinod
+
+
+1. Verification Scope
+
+The generated Part 2 analysis was reviewed against the available source files, change documentation, test-result logs, and metrics. The purpose was to check whether the analysis was consistent with the supplied evidence and whether it distinguished verified facts from assumptions.
+
+
+2. Verification Checklist
+
+| Item checked | Evidence reviewed | Status |
+|---|---|---|
+| Baseline pricing implementation | Original RentalRateCalculator.cs | Checked against the available source |
+| Strategy interface | IPricingPolicy.cs | Checked against the available source |
+| Concrete pricing strategies | StandardPricingPolicy.cs, WeekendPricingPolicy.cs, SeasonalPricingPolicy.cs | Checked against the available source |
+| Policy selection | IPricingPolicySelector.cs, PricingPolicySelector.cs | Checked against the available source |
+| Service integration | BookingService.cs, StaffService.cs | Checked against the available source |
+| Dependency injection and configuration | Program.cs, PricingSettings.cs | Checked against the available source |
+| Automated test results | Supplied final test-result log | Log reports 205 passed, 0 failed, 0 skipped |
+| Baseline test failure | Supplied baseline test-result log | Reviewed; one failure was reported in the baseline run |
+| Metrics and line counts | Supplied metrics.csv | Reviewed; measurements and their scope should be reported accurately |
+| After-change commit | Supplied change records | Exact after-change commit hash was not available for verification |
+
+
+3. Findings
+
+The available source files support the identification of the Strategy pattern through the pricing-policy interface, concrete pricing implementations, selector, and their use by the booking and staff services.
+
+The supplied final test log reports 205 passed tests, with no failures or skipped tests. This is a review of the provided evidence; the test suite was not independently rerun as part of this verification record.
+
+The pricing implementation also has limitations that should remain visible in the report. The weekend policy applies its surcharge to the entire standard rental amount when a rental interval includes a weekend. The seasonal policy checks the pickup month rather than every day of the rental interval. Duplicate private DaysBetween methods remain in the booking and staff services.
+
+
+4. Limitations and Outstanding Checks
+
+- The exact after-change commit hash still needs to be confirmed from the repository.
+- The test suite should be rerun locally if independent execution verification is required.
+- The actual source diff should be reviewed to confirm that only the intended pricing-related files are included in the change.
+- The reviewer should confirm that the acceptance criteria are met by the implementation and tests, rather than relying only on the generated analysis.
+- Any item not personally inspected must remain marked as pending or not independently verified.
+
+
+5. Overall Assessment
+
+The supplied source files and test logs provide evidence for the reported Strategy implementation and test results. This record documents the evidence reviewed and the limitations identified. It does not claim that every change, test, metric, or acceptance criterion has been independently verified.
+
+Reviewer confirmation: Complete this record only after performing the checks listed above. Update the statuses to reflect what was actually inspected, and add the reviewer's initials or signature if required by the team.
