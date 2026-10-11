@@ -1,0 +1,583 @@
+HUMAN VERIFICATION — PART 2 CH01 PATTERN EFFECTS (FLEET-MAINTENANCE SCHEDULING)
+
+Application:
+WanderCar / Fleman Vehicle Rental and Fleet Management Application
+
+Repository:
+https://github.com/Naveen-verma-7697/FleetManagment
+
+Baseline commit:
+dfc61ab8dd6f9bbb2301171457dc03946a249576
+
+Change:
+CH01 — Fleet-maintenance scheduling (State pattern)
+Branch ch03-maintenance-scheduling, cut from the baseline
+
+Source:
+WanderCar_DotNet/src/FlemanApi (all paths below are relative to it)
+
+LLM output reviewed:
+Part2/changes/Change1/pattern_effect.md
+Part2/changes/Change1/test_result.txt
+Part2/changes/Change1/test_result_baseline.txt
+
+Verification principle:
+Each LLM claim about the effect of CH01 on a pattern instance is checked
+against the source after the change and against the baseline. An effect is
+marked CONFIRMED only when the source shows it: a newly introduced pattern
+must show the full collaboration of its roles; "extended" must show new
+participants or clients with no existing participant changed; "preserved"
+must show no participant file changed. Class names or LLM statements alone
+are not sufficient evidence.
+
+HOW TO COMPLETE THIS FILE (delete this block when done):
+For each entry, open the listed files, check the evidence, then fill in
+"Human status" (CONFIRMED / UNCERTAIN / REJECTED), edit "Reason" if your
+judgement differs, and fill in "Reviewer" and "Date".
+Useful commands:
+- Files changed by CH01: git diff --stat dfc61ab8 -- WanderCar_DotNet  (plus untracked files)
+- Tests: dotnet test FlemanApi.Tests  (in WanderCar_DotNet/src)
+
+============================================================
+NEWLY INTRODUCED PATTERN
+============================================================
+
+1. STATE — MAINTENANCE SCHEDULE WORKFLOW
+------------------------------------------------------------
+
+Candidate:
+State
+
+LLM status:
+NEWLY INTRODUCED
+
+Human status:
+
+
+Files inspected:
+- Service/Maintenance/IMaintenanceState.cs
+- Service/Maintenance/MaintenanceStateBase.cs
+- Service/Maintenance/ScheduledState.cs
+- Service/Maintenance/InProgressState.cs
+- Service/Maintenance/CompletedState.cs
+- Service/Maintenance/CancelledState.cs
+- Service/Maintenance/MaintenanceContext.cs
+- Service/MaintenanceService.cs
+- Models/MaintenanceSchedule.cs
+- FlemanApi.Tests/Services/MaintenanceStateTests.cs
+
+Exact source evidence:
+IMaintenanceState (IMaintenanceState.cs:8-15) declares Status, Start,
+Complete and Cancel.
+
+MaintenanceStateBase (MaintenanceStateBase.cs:10) makes Start, Complete and
+Cancel virtual, and each throws ApiException 409 by default (lines 14-16).
+
+The four concrete states override only the operations that are legal for
+them:
+- ScheduledState overrides Start, which checks that the car is AVAILABLE,
+  sets it to UNDER_MAINTENANCE and moves to InProgressState
+  (ScheduledState.cs:18-26), and Cancel, which moves to CancelledState
+  (ScheduledState.cs:31).
+- InProgressState overrides Complete and Cancel, and both release the car
+  (InProgressState.cs:12-28).
+- CompletedState and CancelledState override nothing; they are terminal.
+
+MaintenanceContext selects the state object from the persisted Status with a
+lookup table (MaintenanceContext.cs:28), delegates Start, Complete and
+Cancel to it, and changes state through TransitionTo
+(MaintenanceContext.cs:42).
+
+MaintenanceService.TransitionAsync (MaintenanceService.cs:101-125) only
+creates the context and calls the operation (line 118). It contains no
+switch or if-chain on Status.
+
+Test evidence: MaintenanceStateTests has 18 tests, covering every state x
+operation combination and the context's state selection; all pass in
+test_result.txt.
+
+Reason (suggested):
+Behaviour that varies by status is implemented by separate polymorphic
+state objects. A context holds the current state and delegates to it, and
+the states themselves perform the transitions. This is the full State
+collaboration. In Part 1, State was REJECTED at the baseline because only
+status enums existed; CH01 introduces real state objects, so it is newly
+introduced, not reclassified.
+
+Reviewer:
+
+
+Date:
+
+
+
+============================================================
+EXTENDED PATTERNS
+============================================================
+
+2. REPOSITORY — GENERIC REPOSITORY
+------------------------------------------------------------
+
+Candidate:
+Repository
+
+LLM status:
+EXTENDED
+
+Human status:
+
+
+Files inspected:
+- Repository/IGenericRepository.cs
+- Repository/GenericRepository.cs
+- Repository/AvailabilityRepository.cs
+- Data/FlemanDbContext.cs
+- Service/MaintenanceService.cs
+- FlemanApi.Tests/Services/MaintenanceFleetAvailabilityTests.cs
+
+Exact source evidence:
+IGenericRepository.cs, GenericRepository.cs and AvailabilityRepository.cs
+are not changed by CH01.
+
+FlemanDbContext gains a DbSet<MaintenanceSchedule> (FlemanDbContext.cs:22)
+plus enum conversions and indexes (lines 52-55); these lines are only
+added.
+
+MaintenanceService receives IGenericRepository<MaintenanceSchedule,long>
+and IGenericRepository<Car,long> through its constructor
+(MaintenanceService.cs:19-31).
+
+The unchanged AvailabilityRepository.CountCapacityAsync already excludes
+UNDER_MAINTENANCE cars. MaintenanceFleetAvailabilityTests shows capacity
+dropping from 2 to 1 after maintenance starts, with no edit to that code.
+
+Reason (suggested):
+The repository abstraction and its implementation are unchanged. A new
+entity and a new client use them, which is an extension, not a
+modification.
+
+Reviewer:
+
+
+Date:
+
+
+
+3. DEPENDENCY INJECTION / INVERSION OF CONTROL
+------------------------------------------------------------
+
+Candidate:
+Dependency Injection / IoC
+
+LLM status:
+EXTENDED
+
+Human status:
+
+
+Files inspected:
+- Program.cs
+- Service/MaintenanceService.cs
+- Controllers/MaintenanceController.cs
+
+Exact source evidence:
+Program.cs gains one commented CH01 block (lines 211-214):
+  builder.Services.AddSingleton(TimeProvider.System);
+  builder.Services.AddScoped<IMaintenanceService, MaintenanceService>();
+No existing registration is changed or removed.
+
+MaintenanceController receives IMaintenanceService through its constructor
+(MaintenanceController.cs:15). MaintenanceService receives its two
+repositories and TimeProvider through its constructor
+(MaintenanceService.cs:19-31).
+
+Reason (suggested):
+New registrations and new constructor-injected classes are added to the
+existing composition root, and the mechanism itself is unchanged.
+TimeProvider is injected so that "now" can be fixed in tests.
+
+Reviewer:
+
+
+Date:
+
+
+
+4. DATA TRANSFER OBJECT (DTO)
+------------------------------------------------------------
+
+Candidate:
+DTO
+
+LLM status:
+EXTENDED (not listed separately in pattern_effect.md; added here using the
+Part 1 inventory)
+
+Human status:
+
+
+Files inspected:
+- DTO/ScheduleMaintenanceRequest.cs
+- DTO/MaintenanceTransitionRequest.cs
+- DTO/MaintenanceScheduleDTO.cs
+- Validators/MaintenanceRequestValidators.cs
+- Controllers/MaintenanceController.cs
+- AutoMapper/MappingProfile.cs
+
+Exact source evidence:
+Three new DTO classes are added. MaintenanceController accepts the two
+request DTOs and returns MaintenanceScheduleDTO, which
+MaintenanceService.ToDto builds; the MaintenanceSchedule entity is never
+returned. No existing DTO and no line of MappingProfile.cs is changed.
+
+Reason (suggested):
+The API boundary is extended with new request and response types using the
+existing DTO approach.
+
+Reviewer:
+
+
+Date:
+
+
+
+============================================================
+PRESERVED PATTERNS
+============================================================
+
+5. SERVICE LAYER
+------------------------------------------------------------
+
+Candidate:
+Service Layer (Booking Service Layer)
+
+LLM status:
+PRESERVED
+
+Human status:
+
+
+Files inspected:
+- Controllers/BookingController.cs
+- Service/IBookingService.cs
+- Service/BookingService.cs
+
+Exact source evidence:
+None of these files is changed by CH01. The new MaintenanceController and
+MaintenanceService pair follows the same controller -> service layering
+but is not part of the Booking Service Layer instance.
+
+Reason (suggested):
+The instance's participants are untouched.
+
+Reviewer:
+
+
+Date:
+
+
+
+6. MIDDLEWARE PIPELINE / CHAIN OF RESPONSIBILITY
+------------------------------------------------------------
+
+Candidate:
+Middleware Pipeline / Chain of Responsibility
+
+LLM status:
+PRESERVED
+
+Human status:
+
+
+Files inspected:
+- Middleware/ExceptionHandlingMiddleware.cs
+- Middleware/RequestLoggingMiddleware.cs
+- Program.cs
+
+Exact source evidence:
+Both middleware files are unchanged. In Program.cs the UseMiddleware lines
+move from 220-221 to 225-226 only because the CH01 block was inserted
+above them; their content and order are unchanged.
+
+The new 409 / 404 / 400 responses are raised as ApiException /
+ResourceNotFoundException and turned into JSON by the existing
+ExceptionHandlingMiddleware.
+
+Reason (suggested):
+The chain is unchanged. The new endpoints rely on it without modifying it.
+
+Reviewer:
+
+
+Date:
+
+
+
+7. PRODUCER-CONSUMER / ASYNCHRONOUS WORK QUEUE
+------------------------------------------------------------
+
+Candidate:
+Producer-Consumer
+
+LLM status:
+PRESERVED
+
+Human status:
+
+
+Files inspected:
+- Service/EmailBackgroundQueue.cs
+- Service/EmailService.cs
+- Service/EmailQueueHostedService.cs
+
+Exact source evidence:
+None of these files is changed by CH01, and CH01 sends no e-mail.
+
+Reason (suggested):
+The instance's participants are untouched.
+
+Reviewer:
+
+
+Date:
+
+
+
+8. ADAPTER
+------------------------------------------------------------
+
+Candidate:
+Adapter
+
+LLM status:
+PRESERVED
+
+Human status:
+
+
+Files inspected:
+- Service/IJavaMicroserviceClient.cs
+- Service/JavaMicroserviceClient.cs
+
+Exact source evidence:
+Both files are unchanged by CH01.
+
+Reason (suggested):
+The instance's participants are untouched.
+
+Reviewer:
+
+
+Date:
+
+
+
+9. PROXY
+------------------------------------------------------------
+
+Candidate:
+Proxy
+
+LLM status:
+PRESERVED
+
+Human status:
+
+
+Files inspected:
+- Controllers/LegacyProxyController.cs
+
+Exact source evidence:
+The file is unchanged by CH01.
+
+Reason (suggested):
+The instance's participants are untouched.
+
+Reviewer:
+
+
+Date:
+
+
+
+10. STRANGLER FIG PATTERN
+------------------------------------------------------------
+
+Candidate:
+Strangler Fig
+
+LLM status:
+PRESERVED
+
+Human status:
+
+
+Files inspected:
+- Service/IJavaMicroserviceClient.cs
+- Service/JavaInvoicePdfService.cs
+- Program.cs
+
+Exact source evidence:
+The integration files are unchanged. The AddHttpClient and
+IInvoicePdfService registrations in Program.cs (lines 197 and 204) keep the
+same content and position. The maintenance feature is implemented entirely
+in .NET and makes no call to the Java backend.
+
+Reason (suggested):
+The integration boundary is unchanged.
+
+Reviewer:
+
+
+Date:
+
+
+
+============================================================
+REJECTED CANDIDATES (CH01 SCOPE)
+============================================================
+
+11. SINGLETON
+------------------------------------------------------------
+
+Candidate:
+Singleton
+
+LLM status:
+REJECTED
+
+Human status:
+
+
+Files inspected:
+- Service/Maintenance/ScheduledState.cs
+- Service/Maintenance/InProgressState.cs
+- Service/Maintenance/CompletedState.cs
+- Service/Maintenance/CancelledState.cs
+
+Exact source evidence:
+Each concrete state has a private constructor and a
+"public static readonly ... Instance = new();" field (e.g.
+ScheduledState.cs:9).
+
+Reason (suggested):
+The shared instances exist only because the state objects are stateless,
+which is an implementation detail of the State pattern. They are not a
+separate design decision to provide a global access point, so they are not
+counted as a Singleton instance.
+
+Reviewer:
+
+
+Date:
+
+
+
+12. TEMPLATE METHOD
+------------------------------------------------------------
+
+Candidate:
+Template Method
+
+LLM status:
+REJECTED
+
+Human status:
+
+
+Files inspected:
+- Service/Maintenance/MaintenanceStateBase.cs
+
+Exact source evidence:
+MaintenanceStateBase defines three independent virtual methods whose
+default is to throw ApiException 409 (lines 14-16). No base-class method
+calls them in a fixed sequence.
+
+Reason (suggested):
+There is no invariant algorithm with overridable steps; the base class
+only supplies default behaviour.
+
+Reviewer:
+
+
+Date:
+
+
+
+13. COMMAND
+------------------------------------------------------------
+
+Candidate:
+Command
+
+LLM status:
+REJECTED
+
+Human status:
+
+
+Files inspected:
+- Service/MaintenanceService.cs
+
+Exact source evidence:
+TransitionAsync takes an Action<MaintenanceContext> operation
+(MaintenanceService.cs:102). StartAsync, CompleteAsync and CancelAsync pass
+ctx => ctx.Start(), ctx => ctx.Complete() and ctx => ctx.Cancel().
+
+Reason (suggested):
+The delegate only lets the three operations share loading, notes and saving
+code. There is no command object, invoker, queue, undo or history.
+
+Reviewer:
+
+
+Date:
+
+
+
+============================================================
+TEST EVIDENCE SUMMARY (from the LLM-reported logs; re-run to confirm)
+============================================================
+
+Baseline (dfc61ab8): 183 total, 182 passed, 1 failed
+After CH01:          233 total, 232 passed, 1 failed
+Same failing test in both runs:
+StaffServiceTests.ProcessReturnAsync_CreatesInvoiceHeaderAndDetails
+(clock-dependent; pre-existing; not caused by CH01)
+New CH01 tests:      50 (MaintenanceStateTests 18, MaintenanceServiceTests 20,
+                     MaintenanceFleetAvailabilityTests 2, validator tests 10)
+
+Re-run result (reviewer):
+
+
+============================================================
+FINAL HUMAN VERIFICATION SUMMARY
+============================================================
+
+Newly introduced:
+1  (State — Maintenance Schedule Workflow)
+
+Extended:
+3  (Repository, Dependency Injection / IoC, DTO)
+
+Preserved:
+6  (Service Layer, Middleware Pipeline / Chain of Responsibility,
+    Producer-Consumer, Adapter, Proxy, Strangler Fig)
+
+Replaced / removed:
+0
+
+Rejected (CH01 scope):
+3  (Singleton, Template Method, Command)
+
+Pattern count after CH01:
+10 pattern types, 10 instances (Part 1 baseline: 9 + State)
+
+Final decision:
+
+
+Human verification completed by:Samridhi Singh
+
+
+Verification date:11/10/26
+
