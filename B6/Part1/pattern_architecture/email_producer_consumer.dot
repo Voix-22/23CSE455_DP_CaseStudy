@@ -1,0 +1,1 @@
+digraph G { rankdir=LR; P[label="EmailService\nProducer"]; Q[label="EmailBackgroundQueue\nChannel<T>"]; W[label="EmailQueueHostedService\nConsumer"]; S[label="MailKitEmailSender\nSink"]; P->Q[label="Enqueue"]; Q->W[label="ReadAllAsync"]; W->S[label="execute"]; }

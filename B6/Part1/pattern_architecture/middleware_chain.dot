@@ -1,0 +1,1 @@
+digraph G { rankdir=LR; E[label="ExceptionHandlingMiddleware"]; L[label="RequestLoggingMiddleware"]; C[label="Controller pipeline"]; E->L[label="next"]; L->C[label="next"]; }

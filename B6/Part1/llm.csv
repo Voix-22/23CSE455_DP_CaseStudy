@@ -1,0 +1,2 @@
+part,model_and_date,prompt_file,input_file,output_file,evaluation,verification_file
+Pattern discovery,GPT-5.6 Luna / 2026-10-08,Part1_prompt.txt,llm/input/part1_source_context.txt,llm/output/pattern_discovery_raw.txt,"LLM identified 9 confirmed patterns, 3 uncertain candidates, and 9 rejected candidates. The output was manually checked against the supplied source context. Confirmed findings were retained, uncertain findings were excluded from the confirmed inventory, and rejected candidates were excluded.",llm/human_verification.txt

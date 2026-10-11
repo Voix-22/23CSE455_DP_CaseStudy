@@ -1,0 +1,13 @@
+@startuml
+title Generic Repository Pattern
+interface "IGenericRepository<TEntity,TKey>" as IRepo
+class "GenericRepository<TEntity,TKey>" as Repo
+class VehicleService
+class BookingService
+class FlemanDbContext
+
+IRepo <|.. Repo
+Repo --> FlemanDbContext
+VehicleService --> IRepo
+BookingService --> IRepo
+@enduml

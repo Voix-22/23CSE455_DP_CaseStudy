@@ -1,0 +1,1920 @@
+===== Program.cs =====
+     1	using System.Reflection;
+     2	using System.Text;
+     3	using FlemanApi.Data;
+     4	using FlemanApi.Middleware;
+     5	using FlemanApi.Security;
+     6	using FlemanApi.Service;
+     7	using FluentValidation;
+     8	using FluentValidation.AspNetCore;
+     9	using Microsoft.AspNetCore.Authentication.Google;
+    10	using Microsoft.AspNetCore.Authentication.JwtBearer;
+    11	using Microsoft.AspNetCore.Mvc;
+    12	using Microsoft.EntityFrameworkCore;
+    13	using Microsoft.IdentityModel.Tokens;
+    14	using Microsoft.OpenApi.Models;
+    15	using QuestPDF.Infrastructure;
+    16	using Serilog;
+    17	
+    18	const string GoogleSignInScheme = "GoogleSignIn";
+    19	
+    20	var builder = WebApplication.CreateBuilder(args);
+    21	
+    22	// ---- Logging (requirement #1) ----------------------------------------
+    23	builder.Host.UseSerilog((context, services, config) => config
+    24	    .ReadFrom.Configuration(context.Configuration)
+    25	    .Enrich.FromLogContext()
+    26	    .WriteTo.Console()
+    27	    .WriteTo.File("logs/fleman-dotnet-.log", rollingInterval: RollingInterval.Day));
+    28	
+    29	// ---- MVC / validation ---------------------------------------------------
+    30	builder.Services.AddHttpContextAccessor();
+    31	builder.Services
+    32	    .AddControllers()
+    33	    .AddJsonOptions(o =>
+    34	    {
+    35	        o.JsonSerializerOptions.PropertyNamingPolicy = System.Text.Json.JsonNamingPolicy.CamelCase;
+    36	        // Enums as their plain string name (e.g. "CASH"), matching Java's
+    37	        // Jackson default for @Enumerated(STRING) fields — without this,
+    38	        // System.Text.Json serializes enums as raw numbers.
+    39	        o.JsonSerializerOptions.Converters.Add(new System.Text.Json.Serialization.JsonStringEnumConverter());
+    40	    });
+    41	
+    42	builder.Services.AddValidatorsFromAssembly(Assembly.GetExecutingAssembly());
+    43	builder.Services.AddFluentValidationAutoValidation();
+    44	
+    45	// Matches Java's MethodArgumentNotValidException handler: one aggregated
+    46	// "field: message, field: message" string in the same { message, status,
+    47	// timestamp } envelope, instead of ASP.NET's default ProblemDetails shape.
+    48	builder.Services.Configure<ApiBehaviorOptions>(options =>
+    49	{
+    50	    options.InvalidModelStateResponseFactory = context =>
+    51	    {
+    52	        var message = string.Join(", ", context.ModelState
+    53	            .Where(kvp => kvp.Value?.Errors.Count > 0)
+    54	            .SelectMany(kvp => kvp.Value!.Errors.Select(e => $"{kvp.Key}: {e.ErrorMessage}")));
+    55	
+    56	        var body = new FlemanApi.Exceptions.ErrorResponse(message, StatusCodes.Status400BadRequest);
+    57	        return new BadRequestObjectResult(body);
+    58	    };
+    59	});
+    60	
+    61	// ---- EF Core / MySQL ------------------------------------------------------
+    62	var connectionString = builder.Configuration.GetConnectionString("Default")!;
+    63	builder.Services.AddDbContext<FlemanDbContext>(options =>
+    64	    options.UseMySql(connectionString, ServerVersion.AutoDetect(connectionString)));
+    65	
+    66	// ---- AutoMapper (requirement #10) -----------------------------------------
+    67	builder.Services.AddAutoMapper(cfg => { }, Assembly.GetExecutingAssembly());
+    68	
+    69	// ---- JWT auth (requirement #2) + Google OAuth2 -----------------------------
+    70	builder.Services.Configure<JwtSettings>(builder.Configuration.GetSection(JwtSettings.SectionName));
+    71	var jwtSettings = builder.Configuration.GetSection(JwtSettings.SectionName).Get<JwtSettings>()!;
+    72	
+    73	var authBuilder = builder.Services
+    74	    .AddAuthentication(options =>
+    75	    {
+    76	        options.DefaultAuthenticateScheme = JwtBearerDefaults.AuthenticationScheme;
+    77	        options.DefaultChallengeScheme = JwtBearerDefaults.AuthenticationScheme;
+    78	        options.DefaultScheme = JwtBearerDefaults.AuthenticationScheme;
+    79	    })
+    80	    .AddJwtBearer(options =>
+    81	    {
+    82	        options.MapInboundClaims = false;
+    83	        options.TokenValidationParameters = new TokenValidationParameters
+    84	        {
+    85	            ValidateIssuer = false,
+    86	            ValidateAudience = false,
+    87	            ValidateLifetime = true,
+    88	            ValidateIssuerSigningKey = true,
+    89	            IssuerSigningKey = new SymmetricSecurityKey(Encoding.UTF8.GetBytes(jwtSettings.Secret)),
+    90	            RoleClaimType = "role",
+    91	            NameClaimType = "sub",
+    92	        };
+    93	    });
+    94	
+    95	// Google OAuth2 is only registered when real credentials are configured —
+    96	// GoogleOptions.Validate() throws eagerly on every request's handler
+    97	// resolution otherwise (RemoteAuthenticationOptions requires a non-empty
+    98	// ClientId), which would take down every endpoint, not just the OAuth ones.
+    99	var googleSection = builder.Configuration.GetSection("GoogleOAuth");
+   100	var googleClientId = googleSection["ClientId"];
+   101	var googleClientSecret = googleSection["ClientSecret"];
+   102	var googleOAuthConfigured = !string.IsNullOrWhiteSpace(googleClientId) && !string.IsNullOrWhiteSpace(googleClientSecret);
+   103	
+   104	if (googleOAuthConfigured)
+   105	{
+   106	    authBuilder
+   107	        .AddCookie(GoogleSignInScheme) // transient cookie for the OAuth handshake only — no session auth is used afterwards
+   108	        .AddGoogle(options =>
+   109	        {
+   110	            options.ClientId = googleClientId!;
+   111	            options.ClientSecret = googleClientSecret!;
+   112	            options.SignInScheme = GoogleSignInScheme;
+   113	            options.CallbackPath = "/signin-google";
+   114	            options.Scope.Add("email");
+   115	            options.Scope.Add("profile");
+   116	            // "email_verified" isn't mapped to a claim by the handler by
+   117	            // default — pull it straight off the raw user-info payload to
+   118	            // mirror CustomOAuth2UserService's emailVerified assignment.
+   119	            options.Events.OnCreatingTicket = context =>
+   120	            {
+   121	                if (context.User.TryGetProperty("email_verified", out var verifiedProp))
+   122	                {
+   123	                    context.Identity!.AddClaim(new System.Security.Claims.Claim("email_verified", verifiedProp.ToString()));
+   124	                }
+   125	                return Task.CompletedTask;
+   126	            };
+   127	            // Forces Google's account chooser every time, mirroring
+   128	            // CustomAuthorizationRequestResolver's prompt=select_account.
+   129	            options.Events.OnRedirectToAuthorizationEndpoint = context =>
+   130	            {
+   131	                context.Response.Redirect(context.RedirectUri + "&prompt=select_account");
+   132	                return Task.CompletedTask;
+   133	            };
+   134	        });
+   135	}
+   136	
+   137	builder.Services.AddAuthorization();
+   138	
+   139	// ---- CORS (dev-time, mirrors CorsConfig.java) ------------------------------
+   140	var allowedOrigin = builder.Configuration["Cors:AllowedOrigin"] ?? "http://localhost:5173";
+   141	builder.Services.AddCors(options =>
+   142	{
+   143	    options.AddDefaultPolicy(policy => policy
+   144	        .WithOrigins(allowedOrigin)
+   145	        .WithMethods("GET", "POST", "PUT", "DELETE")
+   146	        .AllowAnyHeader());
+   147	});
+   148	
+   149	// ---- Security helpers -------------------------------------------------
+   150	builder.Services.AddScoped<IJwtTokenService, JwtTokenService>();
+   151	builder.Services.AddScoped<IAuthenticatedUserAccessor, AuthenticatedUserAccessor>();
+   152	
+   153	// ---- Swagger with JWT bearer support ---------------------------------
+   154	builder.Services.AddEndpointsApiExplorer();
+   155	builder.Services.AddSwaggerGen(c =>
+   156	{
+   157	    c.SwaggerDoc("v1", new OpenApiInfo { Title = "Fleman API (.NET)", Version = "v1" });
+   158	    var jwtScheme = new OpenApiSecurityScheme
+   159	    {
+   160	        Scheme = "bearer",
+   161	        BearerFormat = "JWT",
+   162	        Name = "Authorization",
+   163	        In = ParameterLocation.Header,
+   164	        Type = SecuritySchemeType.Http,
+   165	        Description = "Enter a JWT issued by /api/auth/login, /register or /staff-login",
+   166	        Reference = new OpenApiReference { Type = ReferenceType.SecurityScheme, Id = "Bearer" }
+   167	    };
+   168	    c.AddSecurityDefinition("Bearer", jwtScheme);
+   169	    c.AddSecurityRequirement(new OpenApiSecurityRequirement { { jwtScheme, Array.Empty<string>() } });
+   170	});
+   171	
+   172	// ---- QuestPDF (requirement: PDF invoice generation) ------------------
+   173	QuestPDF.Settings.License = LicenseType.Community;
+   174	
+   175	// ---- Repositories / services are registered per-domain below ----------
+   176	// (populated incrementally as each domain — Location, Airport, Addon,
+   177	// Customer/Auth, Vehicle, Booking, Staff/Invoice/Email/PDF, AI, legacy
+   178	// proxy — is implemented.)
+   179	builder.Services.AddScoped(typeof(FlemanApi.Repository.IGenericRepository<,>), typeof(FlemanApi.Repository.GenericRepository<,>));
+   180	
+   181	builder.Services.AddScoped<ILocationService, LocationService>();
+   182	builder.Services.AddScoped<IAirportService, AirportService>();
+   183	builder.Services.AddScoped<IAddonService, AddonService>();
+   184	builder.Services.AddScoped<ICustomerService, CustomerService>();
+   185	builder.Services.AddScoped<FlemanApi.Repository.IAvailabilityRepository, FlemanApi.Repository.AvailabilityRepository>();
+   186	builder.Services.AddScoped<IVehicleService, VehicleService>();
+   187	builder.Services.AddScoped<IBookingService, BookingService>();
+   188	
+   189	builder.Services.Configure<MailSettings>(builder.Configuration.GetSection(MailSettings.SectionName));
+   190	builder.Services.AddSingleton<IEmailBackgroundQueue, EmailBackgroundQueue>();
+   191	builder.Services.AddSingleton<IEmailSender, MailKitEmailSender>();
+   192	builder.Services.AddHostedService<EmailQueueHostedService>();
+   193	builder.Services.AddScoped<IEmailService, EmailService>();
+   194	// Calls the Java backend's invoice-PDF endpoint instead of generating
+   195	// locally with QuestPDF — see JavaInvoicePdfService. Swap back to
+   196	// InvoicePdfService to generate locally without the Java backend running.
+   197	builder.Services.AddScoped<IInvoicePdfService, JavaInvoicePdfService>();
+   198	builder.Services.AddScoped<IStaffService, StaffService>();
+   199	
+   200	builder.Services.Configure<AiSettings>(builder.Configuration.GetSection(AiSettings.SectionName));
+   201	builder.Services.AddScoped<IAiInsightsService, AiInsightsService>();
+   202	
+   203	// Requirement #11 — register a typed HttpClient for the legacy Java microservice.
+   204	builder.Services.AddHttpClient<IJavaMicroserviceClient, JavaMicroserviceClient>(client =>
+   205	{
+   206	    var javaBaseUrl = builder.Configuration["JavaMicroservice:BaseUrl"] ?? "http://localhost:8080";
+   207	    client.BaseAddress = new Uri(javaBaseUrl);
+   208	    client.Timeout = TimeSpan.FromSeconds(10);
+   209	});
+   210	
+   211	var app = builder.Build();
+   212	
+   213	// ---- HTTP pipeline ------------------------------------------------------
+   214	if (app.Environment.IsDevelopment())
+   215	{
+   216	    app.UseSwagger();
+   217	    app.UseSwaggerUI();
+   218	}
+   219	
+   220	app.UseMiddleware<ExceptionHandlingMiddleware>();
+   221	app.UseMiddleware<RequestLoggingMiddleware>();
+   222	
+   223	app.UseCors();
+   224	
+   225	app.UseAuthentication();
+   226	app.UseAuthorization();
+   227	
+   228	app.MapControllers();
+   229	
+   230	using (var scope = app.Services.CreateScope())
+   231	{
+   232	    var db = scope.ServiceProvider.GetRequiredService<FlemanDbContext>();
+   233	    db.Database.Migrate();
+   234	    await FlemanApi.Data.DataSeeder.SeedAsync(db);
+   235	}
+   236	
+   237	app.Run();
+
+===== Repository/IGenericRepository.cs =====
+     1	using System.Linq.Expressions;
+     2	
+     3	namespace FlemanApi.Repository;
+     4	
+     5	// Generic CRUD contract shared by every entity's repository.
+     6	public interface IGenericRepository<TEntity, in TKey> where TEntity : class
+     7	{
+     8	    Task<TEntity?> GetByIdAsync(TKey id);
+     9	    Task<IReadOnlyList<TEntity>> GetAllAsync();
+    10	    Task<IReadOnlyList<TEntity>> FindAsync(Expression<Func<TEntity, bool>> predicate);
+    11	    Task<TEntity?> FirstOrDefaultAsync(Expression<Func<TEntity, bool>> predicate);
+    12	    Task<bool> ExistsAsync(Expression<Func<TEntity, bool>> predicate);
+    13	    Task<TEntity> AddAsync(TEntity entity);
+    14	    void Update(TEntity entity);
+    15	    void Remove(TEntity entity);
+    16	    Task SaveChangesAsync();
+    17	}
+
+===== Repository/GenericRepository.cs =====
+     1	using System.Linq.Expressions;
+     2	using FlemanApi.Data;
+     3	using Microsoft.EntityFrameworkCore;
+     4	
+     5	namespace FlemanApi.Repository;
+     6	
+     7	// EF Core-backed implementation of IGenericRepository — requirement #8.
+     8	// Reused as-is by every entity that doesn't need custom queries; entities
+     9	// that do (e.g. Car, BookingHeader) get a thin sibling interface with just
+    10	// the extra query methods, still built on this same DbContext.
+    11	public class GenericRepository<TEntity, TKey> : IGenericRepository<TEntity, TKey>
+    12	    where TEntity : class
+    13	{
+    14	    protected readonly FlemanDbContext Context;
+    15	    protected readonly DbSet<TEntity> DbSet;
+    16	
+    17	    public GenericRepository(FlemanDbContext context)
+    18	    {
+    19	        Context = context;
+    20	        DbSet = context.Set<TEntity>();
+    21	    }
+    22	
+    23	    public async Task<TEntity?> GetByIdAsync(TKey id)
+    24	    {
+    25	        if (id is null) return null;
+    26	        return await DbSet.FindAsync(id);
+    27	    }
+    28	
+    29	    public async Task<IReadOnlyList<TEntity>> GetAllAsync() =>
+    30	        await DbSet.AsNoTracking().ToListAsync();
+    31	
+    32	    public async Task<IReadOnlyList<TEntity>> FindAsync(Expression<Func<TEntity, bool>> predicate) =>
+    33	        await DbSet.AsNoTracking().Where(predicate).ToListAsync();
+    34	
+    35	    public async Task<TEntity?> FirstOrDefaultAsync(Expression<Func<TEntity, bool>> predicate) =>
+    36	        await DbSet.FirstOrDefaultAsync(predicate);
+    37	
+    38	    public async Task<bool> ExistsAsync(Expression<Func<TEntity, bool>> predicate) =>
+    39	        await DbSet.AnyAsync(predicate);
+    40	
+    41	    public async Task<TEntity> AddAsync(TEntity entity)
+    42	    {
+    43	        await DbSet.AddAsync(entity);
+    44	        return entity;
+    45	    }
+    46	
+    47	    public void Update(TEntity entity) => DbSet.Update(entity);
+    48	
+    49	    public void Remove(TEntity entity) => DbSet.Remove(entity);
+    50	
+    51	    public Task SaveChangesAsync() => Context.SaveChangesAsync();
+    52	}
+
+===== Repository/IAvailabilityRepository.cs =====
+     1	using FlemanApi.Models;
+     2	
+     3	namespace FlemanApi.Repository;
+     4	
+     5	public record CarTypeCountProjection(long CarTypeId, long TotalCars, long AvailableCars, long BookedCars, long MaintenanceCars);
+     6	
+     7	
+     8	public interface IAvailabilityRepository
+     9	{
+    10	    // Physical fleet size for a (hub, carType) combo, minus anything pulled
+    11	    // out of service for maintenance.
+    12	    Task<long> CountCapacityAsync(long hubId, long carTypeId);
+    13	
+    14	    // How many CONFIRMED/ONGOING bookings already reserve this (hub,
+    15	    // carType) for a date range overlapping the one requested.
+    16	    Task<long> CountOverlappingAsync(long hubId, long carTypeId, DateTime pickupDatetime, DateTime returnDatetime, long? excludeBookingId);
+    17	
+    18	    // Per-car-type fleet counts, optionally scoped to one hub — backs the
+    19	    // staff dashboard's available/booked/maintenance breakdown.
+    20	    Task<IReadOnlyList<CarTypeCountProjection>> CountByCarTypeAsync(long? hubId);
+    21	}
+
+===== Repository/AvailabilityRepository.cs =====
+     1	using FlemanApi.Data;
+     2	using FlemanApi.Models;
+     3	using Microsoft.EntityFrameworkCore;
+     4	
+     5	namespace FlemanApi.Repository;
+     6	
+     7	public class AvailabilityRepository : IAvailabilityRepository
+     8	{
+     9	    private static readonly BookingStatus[] ActiveStatuses = { BookingStatus.CONFIRMED, BookingStatus.ONGOING };
+    10	
+    11	    private readonly FlemanDbContext _context;
+    12	
+    13	    public AvailabilityRepository(FlemanDbContext context)
+    14	    {
+    15	        _context = context;
+    16	    }
+    17	
+    18	    public Task<long> CountCapacityAsync(long hubId, long carTypeId) =>
+    19	        _context.Cars.LongCountAsync(c =>
+    20	            c.HubId == hubId && c.CarTypeId == carTypeId && c.Status != CarStatus.UNDER_MAINTENANCE);
+    21	
+    22	    public Task<long> CountOverlappingAsync(
+    23	        long hubId, long carTypeId, DateTime pickupDatetime, DateTime returnDatetime, long? excludeBookingId) =>
+    24	        _context.BookingHeaders.LongCountAsync(b =>
+    25	            b.PickupHubId == hubId
+    26	            && b.CarTypeId == carTypeId
+    27	            && b.BookingStatus.HasValue && ActiveStatuses.Contains(b.BookingStatus.Value)
+    28	            && b.PickupDatetime < returnDatetime
+    29	            && b.ReturnDatetime > pickupDatetime
+    30	            && (excludeBookingId == null || b.BookingId != excludeBookingId.Value));
+    31	
+    32	    public async Task<IReadOnlyList<CarTypeCountProjection>> CountByCarTypeAsync(long? hubId)
+    33	    {
+    34	        var query = _context.Cars.AsNoTracking().AsQueryable();
+    35	        if (hubId is not null) query = query.Where(c => c.HubId == hubId.Value);
+    36	
+    37	        var grouped = await query
+    38	            .GroupBy(c => c.CarTypeId)
+    39	            .Select(g => new CarTypeCountProjection(
+    40	                g.Key,
+    41	                g.LongCount(),
+    42	                g.LongCount(c => c.Status == CarStatus.AVAILABLE),
+    43	                g.LongCount(c => c.Status == CarStatus.BOOKED),
+    44	                g.LongCount(c => c.Status == CarStatus.UNDER_MAINTENANCE)))
+    45	            .ToListAsync();
+    46	
+    47	        return grouped;
+    48	    }
+    49	}
+
+===== Service/IVehicleService.cs =====
+     1	using FlemanApi.DTO;
+     2	
+     3	namespace FlemanApi.Service;
+     4	
+     5	public interface IVehicleService
+     6	{
+     7	    Task<IReadOnlyList<CarTypeDTO>> GetCarTypesAsync();
+     8	    Task<IReadOnlyList<CarTypeDTO>> GetCarTypesForHubAsync(long? hubId, DateTime? pickupDatetime, DateTime? returnDatetime);
+     9	    Task<IReadOnlyList<CarDTO>> GetAvailableCarsAsync(long? hubId, DateTime? pickupDatetime, DateTime? returnDatetime);
+    10	    Task<CarDTO> GetCarByIdAsync(long carId);
+    11	    Task<CarTypeDTO> GetCarTypeByIdAsync(long carTypeId);
+    12	}
+
+===== Service/VehicleService.cs =====
+     1	using AutoMapper;
+     2	using FlemanApi.DTO;
+     3	using FlemanApi.Exceptions;
+     4	using FlemanApi.Models;
+     5	using FlemanApi.Repository;
+     6	
+     7	namespace FlemanApi.Service;
+     8	
+     9	// Mirrors com.fleman.service.impl.VehicleServiceImpl.
+    10	public class VehicleService : IVehicleService
+    11	{
+    12	    private readonly IGenericRepository<Car, long> _cars;
+    13	    private readonly IGenericRepository<CarType, long> _carTypes;
+    14	    private readonly IAvailabilityRepository _availability;
+    15	    private readonly IMapper _mapper;
+    16	
+    17	    public VehicleService(
+    18	        IGenericRepository<Car, long> cars,
+    19	        IGenericRepository<CarType, long> carTypes,
+    20	        IAvailabilityRepository availability,
+    21	        IMapper mapper)
+    22	    {
+    23	        _cars = cars;
+    24	        _carTypes = carTypes;
+    25	        _availability = availability;
+    26	        _mapper = mapper;
+    27	    }
+    28	
+    29	    public async Task<IReadOnlyList<CarTypeDTO>> GetCarTypesAsync() =>
+    30	        _mapper.Map<List<CarTypeDTO>>(await _carTypes.GetAllAsync());
+    31	
+    32	    public async Task<IReadOnlyList<CarTypeDTO>> GetCarTypesForHubAsync(
+    33	        long? hubId, DateTime? pickupDatetime, DateTime? returnDatetime)
+    34	    {
+    35	        if (hubId is null) return await GetCarTypesAsync();
+    36	
+    37	        var carTypes = await _carTypes.GetAllAsync();
+    38	        var result = new List<CarTypeDTO>();
+    39	
+    40	        // Category-level (not per-car) availability: capacity is the
+    41	        // physical fleet of that type at this hub minus anything under
+    42	        // maintenance; demand is how many CONFIRMED/ONGOING bookings
+    43	        // already reserve that type here for an overlapping date range.
+    44	        // Every type is always returned — availableCount 0 is shown
+    45	        // disabled on the vehicle-selection page, not hidden.
+    46	        foreach (var ct in carTypes)
+    47	        {
+    48	            var dto = _mapper.Map<CarTypeDTO>(ct);
+    49	            var capacity = await _availability.CountCapacityAsync(hubId.Value, ct.CarTypeId);
+    50	            var overlapping = pickupDatetime is not null && returnDatetime is not null
+    51	                ? await _availability.CountOverlappingAsync(hubId.Value, ct.CarTypeId, pickupDatetime.Value, returnDatetime.Value, null)
+    52	                : 0;
+    53	            dto.AvailableCount = (int)Math.Max(0, capacity - overlapping);
+    54	            result.Add(dto);
+    55	        }
+    56	
+    57	        return result;
+    58	    }
+    59	
+    60	    public async Task<IReadOnlyList<CarDTO>> GetAvailableCarsAsync(
+    61	        long? hubId, DateTime? pickupDatetime, DateTime? returnDatetime)
+    62	    {
+    63	        if (hubId is null)
+    64	        {
+    65	            var all = await _cars.GetAllAsync();
+    66	            var dtos = new List<CarDTO>();
+    67	            foreach (var c in all) dtos.Add(await ToDtoAsync(c, true));
+    68	            return dtos;
+    69	        }
+    70	
+    71	        // Two different questions, deliberately not conflated: "which cars
+    72	        // exist at this hub" (every one of them) vs "which of them are
+    73	        // physically free right now" (plain status check — individual
+    74	        // cars aren't reserved by date, only the category is).
+    75	        var atHub = await _cars.FindAsync(c => c.HubId == hubId.Value);
+    76	        var result = new List<CarDTO>();
+    77	        foreach (var c in atHub) result.Add(await ToDtoAsync(c, c.Status == CarStatus.AVAILABLE));
+    78	        return result;
+    79	    }
+    80	
+    81	    public async Task<CarDTO> GetCarByIdAsync(long carId)
+    82	    {
+    83	        var car = await _cars.GetByIdAsync(carId)
+    84	            ?? throw new ResourceNotFoundException($"Car not found: {carId}");
+    85	        return await ToDtoAsync(car, car.Status == CarStatus.AVAILABLE);
+    86	    }
+    87	
+    88	    public async Task<CarTypeDTO> GetCarTypeByIdAsync(long carTypeId)
+    89	    {
+    90	        var carType = await _carTypes.GetByIdAsync(carTypeId)
+    91	            ?? throw new ResourceNotFoundException($"Car type not found: {carTypeId}");
+    92	        return _mapper.Map<CarTypeDTO>(carType);
+    93	    }
+    94	
+    95	    private async Task<CarDTO> ToDtoAsync(Car car, bool bookableNow)
+    96	    {
+    97	        var dto = _mapper.Map<CarDTO>(car);
+    98	        dto.BookableNow = bookableNow;
+    99	        // No relationship — an explicit second lookup by the plain
+   100	        // CarTypeId column to build the nested CarTypeDTO the frontend expects.
+   101	        var carType = await _carTypes.GetByIdAsync(car.CarTypeId);
+   102	        if (carType is not null) dto.CarType = _mapper.Map<CarTypeDTO>(carType);
+   103	        return dto;
+   104	    }
+   105	}
+
+===== Service/IBookingService.cs =====
+     1	using FlemanApi.DTO;
+     2	
+     3	namespace FlemanApi.Service;
+     4	
+     5	public interface IBookingService
+     6	{
+     7	    Task<BookingResponseDTO> CreateBookingAsync(CreateBookingRequest request);
+     8	    Task<BookingResponseDTO> GetBookingByConfirmationAsync(string confirmationNo);
+     9	    Task<BookingResponseDTO?> GetLastBookingForCustomerAsync(long customerId);
+    10	    Task<IReadOnlyList<BookingResponseDTO>> GetBookingsForCustomerAsync(long customerId);
+    11	    Task<BookingResponseDTO> ModifyBookingAsync(string confirmationNo, ModifyBookingRequest request);
+    12	    Task<BookingResponseDTO> CancelBookingAsync(string confirmationNo);
+    13	}
+
+===== Service/BookingService.cs =====
+     1	using System.Net;
+     2	using System.Security.Cryptography;
+     3	using FlemanApi.DTO;
+     4	using FlemanApi.Exceptions;
+     5	using FlemanApi.Models;
+     6	using FlemanApi.Repository;
+     7	using FlemanApi.Security;
+     8	using FlemanApi.Util;
+     9	using Microsoft.Extensions.Logging;
+    10	
+    11	namespace FlemanApi.Service;
+    12	
+    13	// Mirrors com.fleman.service.impl.BookingServiceImpl. A booking reserves a
+    14	// car TYPE at a hub for a date range, not any specific vehicle — the
+    15	// physical car is only assigned at staff hand-over (StaffService). See
+    16	// IAvailabilityRepository for the capacity/overlap check this relies on.
+    17	public class BookingService : IBookingService
+    18	{
+    19	    private static readonly BookingStatus[] ActiveStatuses = { BookingStatus.CONFIRMED, BookingStatus.ONGOING };
+    20	    private const string ConfirmationLetters = "ABCDEFGHIJKLMNOPQRSTUVWXYZ";
+    21	    private const string ConfirmationDigits = "0123456789";
+    22	    private const int ConfirmationLetterCount = 3;
+    23	    private const int ConfirmationDigitCount = 5;
+    24	
+    25	    private readonly IGenericRepository<BookingHeader, long> _bookings;
+    26	    private readonly IGenericRepository<BookingDetail, long> _bookingDetails;
+    27	    private readonly IGenericRepository<CarType, long> _carTypes;
+    28	    private readonly IGenericRepository<Customer, long> _customers;
+    29	    private readonly IGenericRepository<Hub, long> _hubs;
+    30	    private readonly IGenericRepository<Addon, long> _addons;
+    31	    private readonly IGenericRepository<Car, long> _cars;
+    32	    private readonly IAvailabilityRepository _availability;
+    33	
+    34	    // Reusing the sibling services' own DTO builders instead of duplicating
+    35	    // that mapping logic here — one source of truth per entity type.
+    36	    private readonly IVehicleService _vehicleService;
+    37	    private readonly ICustomerService _customerService;
+    38	    private readonly ILocationService _locationService;
+    39	    private readonly IAddonService _addonService;
+    40	    private readonly IEmailService _emailService;
+    41	    private readonly IAuthenticatedUserAccessor _currentUser;
+    42	    private readonly ILogger<BookingService> _logger;
+    43	
+    44	    public BookingService(
+    45	        IGenericRepository<BookingHeader, long> bookings,
+    46	        IGenericRepository<BookingDetail, long> bookingDetails,
+    47	        IGenericRepository<CarType, long> carTypes,
+    48	        IGenericRepository<Customer, long> customers,
+    49	        IGenericRepository<Hub, long> hubs,
+    50	        IGenericRepository<Addon, long> addons,
+    51	        IGenericRepository<Car, long> cars,
+    52	        IAvailabilityRepository availability,
+    53	        IVehicleService vehicleService,
+    54	        ICustomerService customerService,
+    55	        ILocationService locationService,
+    56	        IAddonService addonService,
+    57	        IEmailService emailService,
+    58	        IAuthenticatedUserAccessor currentUser,
+    59	        ILogger<BookingService> logger)
+    60	    {
+    61	        _bookings = bookings;
+    62	        _bookingDetails = bookingDetails;
+    63	        _carTypes = carTypes;
+    64	        _customers = customers;
+    65	        _hubs = hubs;
+    66	        _addons = addons;
+    67	        _cars = cars;
+    68	        _availability = availability;
+    69	        _vehicleService = vehicleService;
+    70	        _customerService = customerService;
+    71	        _locationService = locationService;
+    72	        _addonService = addonService;
+    73	        _emailService = emailService;
+    74	        _currentUser = currentUser;
+    75	        _logger = logger;
+    76	    }
+    77	
+    78	    public async Task<BookingResponseDTO> CreateBookingAsync(CreateBookingRequest request)
+    79	    {
+    80	        _logger.LogInformation("Booking process started");
+    81	
+    82	        long customerId;
+    83	        if (_currentUser.IsAuthenticated)
+    84	        {
+    85	            if (_currentUser.GetCurrentRole() == "STAFF")
+    86	            {
+    87	                if (request.CustomerId is null) throw new ApiException("Customer is required.", HttpStatusCode.BadRequest);
+    88	                customerId = request.CustomerId.Value;
+    89	            }
+    90	            else
+    91	            {
+    92	                customerId = _currentUser.GetCurrentUserId();
+    93	            }
+    94	        }
+    95	        else
+    96	        {
+    97	            if (request.CustomerId is null) throw new ApiException("Customer is required.", HttpStatusCode.BadRequest);
+    98	            customerId = request.CustomerId.Value;
+    99	        }
+   100	
+   101	        var carType = await _carTypes.GetByIdAsync(request.CarTypeId!.Value)
+   102	            ?? throw new ResourceNotFoundException($"Car type not found: {request.CarTypeId}");
+   103	
+   104	        if (!(request.ReturnDatetime!.Value > request.PickupDatetime!.Value))
+   105	            throw new ApiException("Return date must be after pickup date", HttpStatusCode.BadRequest);
+   106	
+   107	        // Faithfully mirrors the Java source: this checks request.CustomerId
+   108	        // (the raw request field), not the resolved customerId above — the
+   109	        // two can differ when a logged-in customer's JWT id doesn't match
+   110	        // whatever customerId they happened to submit in the body.
+   111	        if (!await _customers.ExistsAsync(c => c.CustomerId == request.CustomerId))
+   112	            throw new ResourceNotFoundException($"Customer not found: {request.CustomerId}");
+   113	
+   114	        var dropHubId = request.DropHubId ?? request.PickupHubId!.Value;
+   115	        if (!await _hubs.ExistsAsync(h => h.HubId == request.PickupHubId))
+   116	            throw new ResourceNotFoundException($"Hub not found: {request.PickupHubId}");
+   117	        if (!await _hubs.ExistsAsync(h => h.HubId == dropHubId))
+   118	            throw new ResourceNotFoundException($"Hub not found: {dropHubId}");
+   119	
+   120	        await AssertCategoryHasCapacityAsync(request.PickupHubId!.Value, request.CarTypeId!.Value,
+   121	            request.PickupDatetime.Value, request.ReturnDatetime.Value, null);
+   122	
+   123	        var header = new BookingHeader
+   124	        {
+   125	            ConfirmationNo = await GenerateConfirmationNoAsync(),
+   126	            BookingDate = DateTime.Now,
+   127	            CustomerId = customerId,
+   128	            CarTypeId = carType.CarTypeId,
+   129	            CarId = null,
+   130	            PickupHubId = request.PickupHubId.Value,
+   131	            DropHubId = dropHubId,
+   132	            PickupDatetime = request.PickupDatetime.Value,
+   133	            ReturnDatetime = request.ReturnDatetime.Value,
+   134	            BookingStatus = BookingStatus.CONFIRMED,
+   135	            Remarks = request.Remarks ?? string.Empty,
+   136	        };
+   137	
+   138	        var days = DaysBetween(request.PickupDatetime.Value, request.ReturnDatetime.Value);
+   139	        var rentalAmount = RentalRateCalculator.CalculateRentalAmount(carType, days);
+   140	
+   141	        await _bookings.AddAsync(header);
+   142	        await _bookings.SaveChangesAsync();
+   143	
+   144	        var addonAmount = 0.0;
+   145	        if (request.Addons is not null)
+   146	        {
+   147	            foreach (var line in request.Addons)
+   148	            {
+   149	                var addon = line.AddonId is null ? null : await _addons.GetByIdAsync(line.AddonId.Value);
+   150	                if (addon is null) continue;
+   151	                var subtotal = addon.DailyRate * (line.Quantity ?? 0) * days;
+   152	                await _bookingDetails.AddAsync(new BookingDetail
+   153	                {
+   154	                    BookingId = header.BookingId,
+   155	                    AddonId = addon.AddonId,
+   156	                    AddonRate = addon.DailyRate,
+   157	                    Quantity = line.Quantity,
+   158	                    Subtotal = subtotal,
+   159	                });
+   160	                addonAmount += subtotal;
+   161	            }
+   162	        }
+   163	
+   164	        header.EstimatedAmount = rentalAmount + addonAmount;
+   165	        await _bookings.SaveChangesAsync();
+   166	
+   167	        try
+   168	        {
+   169	            var customer = await _customers.GetByIdAsync(header.CustomerId);
+   170	            if (customer is not null)
+   171	            {
+   172	                var body = $"""
+   173	                    Dear {customer.FullName},
+   174	
+   175	                    Your booking has been confirmed successfully.
+   176	
+   177	                    Booking Details
+   178	                    -------------------------
+   179	                    Booking No : {header.ConfirmationNo}
+   180	                    Vehicle Type : {carType.CarTypeName}
+   181	                    Pickup Date : {header.PickupDatetime}
+   182	                    Return Date : {header.ReturnDatetime}
+   183	                    Total Amount : ₹{header.EstimatedAmount:F2}
+   184	
+   185	                    Thank you for choosing Fleeman.
+   186	
+   187	                    Regards,
+   188	                    Fleeman Team
+   189	                    """;
+   190	                await _emailService.SendEmailAsync(customer.Email, "Booking Confirmation - Fleeman", body);
+   191	            }
+   192	        }
+   193	        catch (Exception ex)
+   194	        {
+   195	            _logger.LogWarning(ex, "Failed to send booking confirmation email for {ConfirmationNo}", header.ConfirmationNo);
+   196	        }
+   197	
+   198	        _logger.LogInformation("Booking process completed, confirmationNo={ConfirmationNo}", header.ConfirmationNo);
+   199	        return await ToResponseDtoAsync(header);
+   200	    }
+   201	
+   202	    public async Task<BookingResponseDTO> GetBookingByConfirmationAsync(string confirmationNo)
+   203	    {
+   204	        var header = await FindHeaderAsync(confirmationNo);
+   205	        ValidateBookingAccess(header);
+   206	        return await ToResponseDtoAsync(header);
+   207	    }
+   208	
+   209	    public async Task<BookingResponseDTO?> GetLastBookingForCustomerAsync(long customerId)
+   210	    {
+   211	        var mine = await GetActiveBookingsOrderedAsync(customerId);
+   212	        return mine.Count == 0 ? null : await ToResponseDtoAsync(mine[0]);
+   213	    }
+   214	
+   215	    public async Task<IReadOnlyList<BookingResponseDTO>> GetBookingsForCustomerAsync(long customerId)
+   216	    {
+   217	        var mine = await GetActiveBookingsOrderedAsync(customerId);
+   218	        var result = new List<BookingResponseDTO>();
+   219	        foreach (var h in mine) result.Add(await ToResponseDtoAsync(h));
+   220	        return result;
+   221	    }
+   222	
+   223	    public async Task<BookingResponseDTO> ModifyBookingAsync(string confirmationNo, ModifyBookingRequest request)
+   224	    {
+   225	        var header = await FindHeaderAsync(confirmationNo);
+   226	        ValidateBookingAccess(header);
+   227	
+   228	        // Once a real car has been handed to the customer, the pickup leg
+   229	        // is history — only the still-pending return leg may still change.
+   230	        var pickupHubChanged = request.PickupHubId is not null && request.PickupHubId != header.PickupHubId;
+   231	        var pickupTimeChanged = request.PickupDatetime is not null && request.PickupDatetime != header.PickupDatetime;
+   232	        if ((pickupHubChanged || pickupTimeChanged) && header.CarId is not null)
+   233	        {
+   234	            throw new ApiException("Vehicle has already been handed over — pickup location and time can no longer be changed", HttpStatusCode.Conflict);
+   235	        }
+   236	
+   237	        if (request.PickupHubId is not null)
+   238	        {
+   239	            if (!await _hubs.ExistsAsync(h => h.HubId == request.PickupHubId))
+   240	                throw new ResourceNotFoundException($"Hub not found: {request.PickupHubId}");
+   241	            header.PickupHubId = request.PickupHubId.Value;
+   242	        }
+   243	        if (request.DropHubId is not null)
+   244	        {
+   245	            if (!await _hubs.ExistsAsync(h => h.HubId == request.DropHubId))
+   246	                throw new ResourceNotFoundException($"Hub not found: {request.DropHubId}");
+   247	            header.DropHubId = request.DropHubId.Value;
+   248	        }
+   249	        if (request.PickupDatetime is not null) header.PickupDatetime = request.PickupDatetime.Value;
+   250	        if (request.ReturnDatetime is not null) header.ReturnDatetime = request.ReturnDatetime.Value;
+   251	        if (request.Remarks is not null) header.Remarks = request.Remarks;
+   252	
+   253	        // Changing the reserved category: only while no real car has been
+   254	        // handed over yet.
+   255	        var typeChanged = request.CarTypeId is not null && request.CarTypeId != header.CarTypeId;
+   256	        if (typeChanged)
+   257	        {
+   258	            if (header.CarId is not null)
+   259	                throw new ApiException("Vehicle has already been handed over — category can no longer be changed", HttpStatusCode.Conflict);
+   260	            if (!await _carTypes.ExistsAsync(ct => ct.CarTypeId == request.CarTypeId))
+   261	                throw new ResourceNotFoundException($"Car type not found: {request.CarTypeId}");
+   262	            header.CarTypeId = request.CarTypeId!.Value;
+   263	        }
+   264	
+   265	        // Any change to hub, dates, or category needs a fresh capacity
+   266	        // check against the booking's own final values, excluding itself
+   267	        // from the demand count. Skipped once a car is already assigned.
+   268	        var needsRecheck = typeChanged || request.PickupHubId is not null
+   269	            || request.PickupDatetime is not null || request.ReturnDatetime is not null;
+   270	        if (needsRecheck && header.CarId is null)
+   271	        {
+   272	            await AssertCategoryHasCapacityAsync(header.PickupHubId, header.CarTypeId,
+   273	                header.PickupDatetime, header.ReturnDatetime, header.BookingId);
+   274	        }
+   275	
+   276	        // Replacing the add-on lines: null means "leave as-is", an empty
+   277	        // list means "every add-on was removed". Locked once a car has
+   278	        // been handed over, same as the pickup-hub/time guard above.
+   279	        if (request.Addons is not null && header.CarId is not null)
+   280	        {
+   281	            throw new ApiException("Vehicle has already been handed over — add-ons can no longer be changed", HttpStatusCode.Conflict);
+   282	        }
+   283	
+   284	        var days = DaysBetween(header.PickupDatetime, header.ReturnDatetime);
+   285	        double addonAmount;
+   286	        if (request.Addons is not null)
+   287	        {
+   288	            var existingLines = await _bookingDetails.FindAsync(d => d.BookingId == header.BookingId);
+   289	            foreach (var line in existingLines) _bookingDetails.Remove(line);
+   290	
+   291	            var total = 0.0;
+   292	            foreach (var line in request.Addons)
+   293	            {
+   294	                var addon = line.AddonId is null ? null : await _addons.GetByIdAsync(line.AddonId.Value);
+   295	                if (addon is null) continue;
+   296	                var subtotal = addon.DailyRate * (line.Quantity ?? 0) * days;
+   297	                await _bookingDetails.AddAsync(new BookingDetail
+   298	                {
+   299	                    BookingId = header.BookingId,
+   300	                    AddonId = addon.AddonId,
+   301	                    AddonRate = addon.DailyRate,
+   302	                    Quantity = line.Quantity,
+   303	                    Subtotal = subtotal,
+   304	                });
+   305	                total += subtotal;
+   306	            }
+   307	            addonAmount = total;
+   308	        }
+   309	        else
+   310	        {
+   311	            var currentLines = await _bookingDetails.FindAsync(d => d.BookingId == header.BookingId);
+   312	            addonAmount = currentLines.Sum(d => d.Subtotal ?? 0);
+   313	        }
+   314	
+   315	        var currentCarType = await _carTypes.GetByIdAsync(header.CarTypeId);
+   316	        var rentalAmount = currentCarType is not null ? RentalRateCalculator.CalculateRentalAmount(currentCarType, days) : 0.0;
+   317	        header.EstimatedAmount = rentalAmount + addonAmount;
+   318	
+   319	        await _bookings.SaveChangesAsync();
+   320	        return await ToResponseDtoAsync(header);
+   321	    }
+   322	
+   323	    public async Task<BookingResponseDTO> CancelBookingAsync(string confirmationNo)
+   324	    {
+   325	        var header = await FindHeaderAsync(confirmationNo);
+   326	        ValidateBookingAccess(header);
+   327	        header.BookingStatus = BookingStatus.CANCELLED;
+   328	
+   329	        // A car has only ever been touched if it was actually handed over —
+   330	        // release it back to the fleet in that case. Otherwise there's
+   331	        // nothing to release: the booking only ever held category capacity.
+   332	        if (header.CarId is not null)
+   333	        {
+   334	            var car = await _cars.GetByIdAsync(header.CarId.Value);
+   335	            if (car is not null)
+   336	            {
+   337	                car.Status = CarStatus.AVAILABLE;
+   338	                car.IsAvailable = true;
+   339	            }
+   340	        }
+   341	
+   342	        await _bookings.SaveChangesAsync();
+   343	        return await ToResponseDtoAsync(header);
+   344	    }
+   345	
+   346	    // Capacity (physical fleet of this type at this hub, minus maintenance)
+   347	    // minus demand (other CONFIRMED/ONGOING bookings whose dates overlap)
+   348	    // must leave at least one car free, or the reservation is rejected.
+   349	    private async Task AssertCategoryHasCapacityAsync(
+   350	        long hubId, long carTypeId, DateTime pickupDatetime, DateTime returnDatetime, long? excludeBookingId)
+   351	    {
+   352	        var capacity = await _availability.CountCapacityAsync(hubId, carTypeId);
+   353	        var overlapping = await _availability.CountOverlappingAsync(hubId, carTypeId, pickupDatetime, returnDatetime, excludeBookingId);
+   354	        if (capacity - overlapping <= 0)
+   355	        {
+   356	            throw new ApiException("That car type is no longer available at this hub for these dates", HttpStatusCode.Conflict);
+   357	        }
+   358	    }
+   359	
+   360	    private async Task<BookingHeader> FindHeaderAsync(string confirmationNo)
+   361	    {
+   362	        var lower = confirmationNo.ToLower();
+   363	        return await _bookings.FirstOrDefaultAsync(b => b.ConfirmationNo.ToLower() == lower)
+   364	            ?? throw new ResourceNotFoundException("No booking found for that confirmation number");
+   365	    }
+   366	
+   367	    private async Task<List<BookingHeader>> GetActiveBookingsOrderedAsync(long customerId)
+   368	    {
+   369	        var mine = await _bookings.FindAsync(b => b.CustomerId == customerId && b.BookingStatus != BookingStatus.CANCELLED);
+   370	        return mine.OrderByDescending(b => b.BookingDate).ToList();
+   371	    }
+   372	
+   373	    // Fully random each time (3 letters + 5 digits, e.g. "QXR48213") —
+   374	    // re-rolls on the rare chance of a collision with an existing
+   375	    // confirmation number.
+   376	    private async Task<string> GenerateConfirmationNoAsync()
+   377	    {
+   378	        string candidate;
+   379	        do
+   380	        {
+   381	            var chars = new char[ConfirmationLetterCount + ConfirmationDigitCount];
+   382	            for (var i = 0; i < ConfirmationLetterCount; i++)
+   383	                chars[i] = ConfirmationLetters[RandomNumberGenerator.GetInt32(ConfirmationLetters.Length)];
+   384	            for (var i = 0; i < ConfirmationDigitCount; i++)
+   385	                chars[ConfirmationLetterCount + i] = ConfirmationDigits[RandomNumberGenerator.GetInt32(ConfirmationDigits.Length)];
+   386	            candidate = new string(chars);
+   387	        } while (await _bookings.ExistsAsync(b => b.ConfirmationNo.ToLower() == candidate.ToLower()));
+   388	        return candidate;
+   389	    }
+   390	
+   391	    private static int DaysBetween(DateTime pickup, DateTime returnDt)
+   392	    {
+   393	        var hours = (returnDt - pickup).TotalHours;
+   394	        var fullDays = (long)Math.Ceiling(hours / 24.0);
+   395	        return (int)Math.Max(1, fullDays);
+   396	    }
+   397	
+   398	    private void ValidateBookingAccess(BookingHeader booking)
+   399	    {
+   400	        var role = _currentUser.GetCurrentRole();
+   401	        if (role == "STAFF") return;
+   402	
+   403	        var customerId = _currentUser.GetCurrentUserId();
+   404	        if (booking.CustomerId != customerId)
+   405	        {
+   406	            throw new ApiException("Access denied.", HttpStatusCode.Forbidden);
+   407	        }
+   408	    }
+   409	
+   410	    // The .NET equivalent of the Java enrich(header) function — every
+   411	    // booking-related endpoint returns this same nested shape. No entity
+   412	    // relationships are traversed; every nested object is fetched by its
+   413	    // plain id column through the owning service.
+   414	    private async Task<BookingResponseDTO> ToResponseDtoAsync(BookingHeader header)
+   415	    {
+   416	        var dto = new BookingResponseDTO
+   417	        {
+   418	            BookingId = header.BookingId,
+   419	            ConfirmationNo = header.ConfirmationNo,
+   420	            BookingDate = header.BookingDate,
+   421	            CustomerId = header.CustomerId,
+   422	            CarId = header.CarId,
+   423	            PickupHubId = header.PickupHubId,
+   424	            DropHubId = header.DropHubId,
+   425	            PickupDatetime = header.PickupDatetime,
+   426	            ReturnDatetime = header.ReturnDatetime,
+   427	            ActualHandoverDatetime = header.ActualHandoverDatetime,
+   428	            ActualReturnDatetime = header.ActualReturnDatetime,
+   429	            HandoverFuelLevel = header.HandoverFuelLevel,
+   430	            BookingStatus = header.BookingStatus?.ToString(),
+   431	            EstimatedAmount = header.EstimatedAmount,
+   432	            Remarks = header.Remarks,
+   433	        };
+   434	
+   435	        dto.CarType = await _vehicleService.GetCarTypeByIdAsync(header.CarTypeId);
+   436	        if (header.CarId is not null)
+   437	        {
+   438	            dto.Car = await _vehicleService.GetCarByIdAsync(header.CarId.Value);
+   439	        }
+   440	        dto.Customer = await _customerService.GetCustomerByIdAsync(header.CustomerId);
+   441	        dto.PickupHub = await _locationService.GetHubByIdAsync(header.PickupHubId);
+   442	        dto.DropHub = await _locationService.GetHubByIdAsync(header.DropHubId);
+   443	
+   444	        var allAddons = await _addonService.GetAddonsAsync();
+   445	        var lines = await _bookingDetails.FindAsync(d => d.BookingId == header.BookingId);
+   446	        dto.AddonLines = lines.Select(detail => new BookingDetailDTO
+   447	        {
+   448	            BookingDetailId = detail.BookingDetailId,
+   449	            BookingId = header.BookingId,
+   450	            AddonId = detail.AddonId,
+   451	            AddonRate = detail.AddonRate,
+   452	            Quantity = detail.Quantity,
+   453	            Subtotal = detail.Subtotal,
+   454	            Addon = allAddons.FirstOrDefault(a => a.AddonId == detail.AddonId),
+   455	        }).ToList();
+   456	
+   457	        return dto;
+   458	    }
+   459	}
+
+===== Service/IEmailService.cs =====
+     1	using FlemanApi.DTO;
+     2	
+     3	namespace FlemanApi.Service;
+     4	
+     5	// Mirrors com.fleman.service.impl.EmailService — implemented in full
+     6	// (MailKit + background queue) alongside StaffService/InvoicePdfService.
+     7	public interface IEmailService
+     8	{
+     9	    Task SendEmailAsync(string to, string subject, string body);
+    10	
+    11	    Task SendBookingInvoiceAsync(
+    12	        string to, string customerName, BookingResponseDTO booking, InvoiceResponseDTO invoice, byte[] pdf);
+    13	}
+
+===== Service/EmailService.cs =====
+     1	using FlemanApi.DTO;
+     2	
+     3	namespace FlemanApi.Service;
+     4	
+     5	// Mirrors com.fleman.service.impl.EmailService — SendEmailAsync/
+     6	// SendBookingInvoiceAsync enqueue onto the background worker instead of
+     7	// awaiting the SMTP round-trip inline, the .NET equivalent of @Async.
+     8	public class EmailService : IEmailService
+     9	{
+    10	    private readonly IEmailBackgroundQueue _queue;
+    11	
+    12	    public EmailService(IEmailBackgroundQueue queue)
+    13	    {
+    14	        _queue = queue;
+    15	    }
+    16	
+    17	    public Task SendEmailAsync(string to, string subject, string body)
+    18	    {
+    19	        _queue.Enqueue((sender, ct) => sender.SendPlainAsync(to, subject, body));
+    20	        return Task.CompletedTask;
+    21	    }
+    22	
+    23	    public Task SendBookingInvoiceAsync(
+    24	        string to, string customerName, BookingResponseDTO booking, InvoiceResponseDTO invoice, byte[] pdf)
+    25	    {
+    26	        var paid = string.Equals(invoice.PaymentStatus, "PAID", StringComparison.OrdinalIgnoreCase);
+    27	        var subject = $"WanderCar Booking {booking.ConfirmationNo} — Vehicle Returned";
+    28	        var body = $"""
+    29	            Dear {customerName},
+    30	
+    31	            Your vehicle has been returned and this booking is now complete.
+    32	
+    33	            Booking Number    : {booking.ConfirmationNo}
+    34	            Vehicle           : {invoice.VehicleNumber}
+    35	            Handed over       : {invoice.HandoverDatetime}
+    36	            Returned          : {invoice.ReturnDatetime}
+    37	            Duration          : {invoice.Days} day(s)
+    38	
+    39	            Rental Amount     : ₹{invoice.RentalAmount:F2}
+    40	            Add-on Amount     : ₹{invoice.AddonAmount:F2}
+    41	            Fuel Charge       : ₹{invoice.FuelCharge ?? 0.0:F2}
+    42	            Extra Charges     : ₹{invoice.ExtraChargeAmount ?? 0.0:F2}
+    43	            Total Amount      : ₹{invoice.TotalAmount:F2}
+    44	            Payment Status    : {invoice.PaymentStatus}{(invoice.PaymentReference is not null ? $" ({invoice.PaymentReference})" : "")}
+    45	
+    46	            {(paid ? "Payment has been received in full." : "Payment is still pending collection at this time.")}
+    47	
+    48	            Thank you for choosing WanderCar.
+    49	
+    50	            Invoice attached.
+    51	
+    52	            """;
+    53	
+    54	        _queue.Enqueue((sender, ct) => sender.SendWithAttachmentAsync(to, subject, body, "Invoice.pdf", pdf));
+    55	        return Task.CompletedTask;
+    56	    }
+    57	}
+
+===== Service/EmailBackgroundQueue.cs =====
+     1	using System.Threading.Channels;
+     2	
+     3	namespace FlemanApi.Service;
+     4	
+     5	// The .NET equivalent of AsyncConfig's "emailExecutor" ThreadPoolTaskExecutor
+     6	// (core=5, max=10, queue=100) + EmailService's @Async methods: fire-and-
+     7	// forget work queued here runs on EmailQueueHostedService's background loop
+     8	// instead of blocking the request thread.
+     9	public interface IEmailBackgroundQueue
+    10	{
+    11	    void Enqueue(Func<IEmailSender, CancellationToken, Task> workItem);
+    12	    IAsyncEnumerable<Func<IEmailSender, CancellationToken, Task>> ReadAllAsync(CancellationToken cancellationToken);
+    13	}
+    14	
+    15	public class EmailBackgroundQueue : IEmailBackgroundQueue
+    16	{
+    17	    private readonly Channel<Func<IEmailSender, CancellationToken, Task>> _channel =
+    18	        Channel.CreateBounded<Func<IEmailSender, CancellationToken, Task>>(100);
+    19	
+    20	    public void Enqueue(Func<IEmailSender, CancellationToken, Task> workItem) =>
+    21	        _channel.Writer.TryWrite(workItem);
+    22	
+    23	    public IAsyncEnumerable<Func<IEmailSender, CancellationToken, Task>> ReadAllAsync(CancellationToken cancellationToken) =>
+    24	        _channel.Reader.ReadAllAsync(cancellationToken);
+    25	}
+
+===== Service/EmailQueueHostedService.cs =====
+     1	using Microsoft.Extensions.Hosting;
+     2	using Microsoft.Extensions.Logging;
+     3	
+     4	namespace FlemanApi.Service;
+     5	
+     6	public class EmailQueueHostedService : BackgroundService
+     7	{
+     8	    private readonly IEmailBackgroundQueue _queue;
+     9	    private readonly IEmailSender _emailSender;
+    10	    private readonly ILogger<EmailQueueHostedService> _logger;
+    11	
+    12	    public EmailQueueHostedService(IEmailBackgroundQueue queue, IEmailSender emailSender, ILogger<EmailQueueHostedService> logger)
+    13	    {
+    14	        _queue = queue;
+    15	        _emailSender = emailSender;
+    16	        _logger = logger;
+    17	    }
+    18	
+    19	    protected override async Task ExecuteAsync(CancellationToken stoppingToken)
+    20	    {
+    21	        await foreach (var workItem in _queue.ReadAllAsync(stoppingToken))
+    22	        {
+    23	            try
+    24	            {
+    25	                await workItem(_emailSender, stoppingToken);
+    26	            }
+    27	            catch (Exception ex)
+    28	            {
+    29	                _logger.LogWarning(ex, "Background email send failed");
+    30	            }
+    31	        }
+    32	    }
+    33	}
+
+===== Service/IEmailSender.cs =====
+     1	namespace FlemanApi.Service;
+     2	
+     3	// Thin SMTP wrapper (MailKit) — the thing actually queued/dispatched by
+     4	// the background email worker, mirroring JavaMailSender in the Java app.
+     5	public interface IEmailSender
+     6	{
+     7	    Task SendPlainAsync(string to, string subject, string body);
+     8	    Task SendWithAttachmentAsync(string to, string subject, string body, string attachmentName, byte[] attachment);
+     9	}
+
+===== Service/MailKitEmailSender.cs =====
+     1	using Microsoft.Extensions.Logging;
+     2	using Microsoft.Extensions.Options;
+     3	using MimeKit;
+     4	using MailKit.Net.Smtp;
+     5	using MailKit.Security;
+     6	
+     7	namespace FlemanApi.Service;
+     8	
+     9	public class MailKitEmailSender : IEmailSender
+    10	{
+    11	    private readonly MailSettings _settings;
+    12	    private readonly ILogger<MailKitEmailSender> _logger;
+    13	
+    14	    public MailKitEmailSender(IOptions<MailSettings> settings, ILogger<MailKitEmailSender> logger)
+    15	    {
+    16	        _settings = settings.Value;
+    17	        _logger = logger;
+    18	    }
+    19	
+    20	    public async Task SendPlainAsync(string to, string subject, string body)
+    21	    {
+    22	        var message = BuildMessage(to, subject);
+    23	        message.Body = new TextPart("plain") { Text = body };
+    24	        await SendAsync(message);
+    25	    }
+    26	
+    27	    public async Task SendWithAttachmentAsync(string to, string subject, string body, string attachmentName, byte[] attachment)
+    28	    {
+    29	        var message = BuildMessage(to, subject);
+    30	        var builder = new BodyBuilder { TextBody = body };
+    31	        builder.Attachments.Add(attachmentName, attachment);
+    32	        message.Body = builder.ToMessageBody();
+    33	        await SendAsync(message);
+    34	    }
+    35	
+    36	    private MimeMessage BuildMessage(string to, string subject)
+    37	    {
+    38	        var message = new MimeMessage();
+    39	        message.From.Add(MailboxAddress.Parse(string.IsNullOrWhiteSpace(_settings.Username) ? "no-reply@wandercar.local" : _settings.Username));
+    40	        message.To.Add(MailboxAddress.Parse(to));
+    41	        message.Subject = subject;
+    42	        return message;
+    43	    }
+    44	
+    45	    private async Task SendAsync(MimeMessage message)
+    46	    {
+    47	        if (string.IsNullOrWhiteSpace(_settings.Host) || string.IsNullOrWhiteSpace(_settings.Username))
+    48	        {
+    49	            // No SMTP credentials configured (e.g. fresh checkout, secrets
+    50	            // not yet filled in) — log instead of throwing, matching the
+    51	            // best-effort "swallow and continue" behaviour every caller in
+    52	            // the Java app already wraps its email sends in.
+    53	            _logger.LogInformation("Mail not configured — skipping send of {Subject} to {To}", message.Subject, message.To);
+    54	            return;
+    55	        }
+    56	
+    57	        using var client = new SmtpClient();
+    58	        await client.ConnectAsync(_settings.Host, _settings.Port,
+    59	            _settings.UseStartTls ? SecureSocketOptions.StartTls : SecureSocketOptions.Auto);
+    60	        await client.AuthenticateAsync(_settings.Username, _settings.Password);
+    61	        await client.SendAsync(message);
+    62	        await client.DisconnectAsync(true);
+    63	    }
+    64	}
+
+===== Middleware/ExceptionHandlingMiddleware.cs =====
+     1	using System.Net;
+     2	using System.Text.Json;
+     3	using FlemanApi.Exceptions;
+     4	
+     5	namespace FlemanApi.Middleware;
+     6	
+     7	// Mirrors com.fleman.exception.GlobalExceptionHandler (@RestControllerAdvice) —
+     8	// requirement #4. Every unhandled exception, anywhere in the pipeline, comes
+     9	// out the wire as the same { message, status, timestamp } JSON shape.
+    10	// FluentValidation failures are handled separately by the ApiBehaviorOptions
+    11	// .InvalidModelStateResponseFactory registered in Program.cs (Java's
+    12	// MethodArgumentNotValidException equivalent), so this middleware only needs
+    13	// to cover ApiException and everything else.
+    14	public class ExceptionHandlingMiddleware
+    15	{
+    16	    private readonly RequestDelegate _next;
+    17	    private readonly ILogger<ExceptionHandlingMiddleware> _logger;
+    18	    private static readonly JsonSerializerOptions JsonOptions = new()
+    19	    {
+    20	        PropertyNamingPolicy = JsonNamingPolicy.CamelCase
+    21	    };
+    22	
+    23	    public ExceptionHandlingMiddleware(RequestDelegate next, ILogger<ExceptionHandlingMiddleware> logger)
+    24	    {
+    25	        _next = next;
+    26	        _logger = logger;
+    27	    }
+    28	
+    29	    public async Task InvokeAsync(HttpContext context)
+    30	    {
+    31	        try
+    32	        {
+    33	            await _next(context);
+    34	        }
+    35	        catch (ApiException ex)
+    36	        {
+    37	            _logger.LogWarning(ex, "API exception: {Message}", ex.Message);
+    38	            await WriteErrorAsync(context, (int)ex.Status, ex.Message);
+    39	        }
+    40	        catch (Exception ex)
+    41	        {
+    42	            _logger.LogError(ex, "Unhandled exception processing {Method} {Path}", context.Request.Method, context.Request.Path);
+    43	            await WriteErrorAsync(context, (int)HttpStatusCode.InternalServerError, "Unexpected error occurred");
+    44	        }
+    45	    }
+    46	
+    47	    private static async Task WriteErrorAsync(HttpContext context, int status, string message)
+    48	    {
+    49	        if (context.Response.HasStarted) return;
+    50	
+    51	        context.Response.ContentType = "application/json";
+    52	        context.Response.StatusCode = status;
+    53	        var body = new ErrorResponse(message, status);
+    54	        await context.Response.WriteAsync(JsonSerializer.Serialize(body, JsonOptions));
+    55	    }
+    56	}
+
+===== Middleware/RequestLoggingMiddleware.cs =====
+     1	using System.Diagnostics;
+     2	
+     3	namespace FlemanApi.Middleware;
+     4	
+     5	// Structured request-timing log for every request — the ASP.NET Core
+     6	// equivalent of com.fleman.aspect.LoggingAspect's @Around advice over every
+     7	// *ServiceImpl method, moved to the HTTP boundary since .NET has no
+     8	// built-in AOP layer to hang it on service classes generically.
+     9	public class RequestLoggingMiddleware
+    10	{
+    11	    private readonly RequestDelegate _next;
+    12	    private readonly ILogger<RequestLoggingMiddleware> _logger;
+    13	
+    14	    public RequestLoggingMiddleware(RequestDelegate next, ILogger<RequestLoggingMiddleware> logger)
+    15	    {
+    16	        _next = next;
+    17	        _logger = logger;
+    18	    }
+    19	
+    20	    public async Task InvokeAsync(HttpContext context)
+    21	    {
+    22	        var sw = Stopwatch.StartNew();
+    23	        _logger.LogInformation("--> {Method} {Path}", context.Request.Method, context.Request.Path);
+    24	        try
+    25	        {
+    26	            await _next(context);
+    27	        }
+    28	        finally
+    29	        {
+    30	            sw.Stop();
+    31	            _logger.LogInformation(
+    32	                "<-- {Method} {Path} responded {StatusCode} in {ElapsedMs}ms",
+    33	                context.Request.Method, context.Request.Path, context.Response.StatusCode, sw.ElapsedMilliseconds);
+    34	        }
+    35	    }
+    36	}
+
+===== Service/IJavaMicroserviceClient.cs =====
+     1	using FlemanApi.DTO;
+     2	
+     3	namespace FlemanApi.Service;
+     4	
+     5	// Requirement #11 — calls the still-running Java Spring Boot backend
+     6	// (fleman-backend, port 8080 by default) over HTTP, demonstrating a
+     7	// strangler-pattern integration. The rest of this API is fully
+     8	// self-sufficient — this is opt-in, not a hard runtime dependency.
+     9	public interface IJavaMicroserviceClient
+    10	{
+    11	    Task<string> GetStatesAsync();
+    12	    Task<string> GetHealthAsync();
+    13	    Task<byte[]> GenerateInvoicePdfAsync(InvoicePdfRequestDto request);
+    14	}
+
+===== Service/JavaMicroserviceClient.cs =====
+     1	using System.Globalization;
+     2	using System.Net.Http.Json;
+     3	using System.Text.Json;
+     4	using System.Text.Json.Serialization;
+     5	using FlemanApi.DTO;
+     6	
+     7	namespace FlemanApi.Service;
+     8	
+     9	public class JavaMicroserviceClient : IJavaMicroserviceClient
+    10	{
+    11	    // Java's LocalDateTime has no timezone concept at all — the default
+    12	    // System.Text.Json DateTime converter writes a "+05:30"/"Z" offset
+    13	    // whenever Kind is Local/Utc, which Jackson's LocalDateTimeDeserializer
+    14	    // then fails to parse ("unparsed text found"). This converter always
+    15	    // writes the plain wall-clock value, matching what LocalDateTime expects.
+    16	    private sealed class NaiveDateTimeConverter : JsonConverter<DateTime>
+    17	    {
+    18	        private const string Format = "yyyy-MM-ddTHH:mm:ss.ffffff";
+    19	
+    20	        public override DateTime Read(ref Utf8JsonReader reader, Type typeToConvert, JsonSerializerOptions options)
+    21	            => DateTime.Parse(reader.GetString()!, CultureInfo.InvariantCulture);
+    22	
+    23	        public override void Write(Utf8JsonWriter writer, DateTime value, JsonSerializerOptions options)
+    24	            => writer.WriteStringValue(value.ToString(Format, CultureInfo.InvariantCulture));
+    25	    }
+    26	
+    27	    // PostAsJsonAsync doesn't pick up the CamelCase policy configured for
+    28	    // MVC in Program.cs (that only applies to ASP.NET Core's own controller
+    29	    // serialization, not outgoing HttpClient calls) — without this it
+    30	    // defaults to PascalCase property names, which Jackson on the Java side
+    31	    // doesn't recognise (fail-on-unknown-properties is on by default there),
+    32	    // so every field came through as null and the request 500'd.
+    33	    private static readonly JsonSerializerOptions JavaJsonOptions = new()
+    34	    {
+    35	        PropertyNamingPolicy = JsonNamingPolicy.CamelCase,
+    36	        Converters = { new NaiveDateTimeConverter() },
+    37	    };
+    38	
+    39	    private readonly HttpClient _httpClient;
+    40	
+    41	    public JavaMicroserviceClient(HttpClient httpClient)
+    42	    {
+    43	        _httpClient = httpClient;
+    44	    }
+    45	
+    46	    public async Task<string> GetStatesAsync()
+    47	    {
+    48	        var response = await _httpClient.GetAsync("/api/states");
+    49	        response.EnsureSuccessStatusCode();
+    50	        return await response.Content.ReadAsStringAsync();
+    51	    }
+    52	
+    53	    public async Task<string> GetHealthAsync()
+    54	    {
+    55	        // Not /actuator/health: SecurityConfig's anyRequest().authenticated()
+    56	        // catches every actuator endpoint too (management.endpoints.web
+    57	        // .exposure.include=* only decides which ones REGISTER, not their
+    58	        // auth requirement), so an anonymous call there 302s into the
+    59	        // Google OAuth2 login flow instead of returning JSON. "/profile" is
+    60	        // the one endpoint SecurityConfig explicitly permitAll()s that
+    61	        // still proves the app is up and responding.
+    62	        var response = await _httpClient.GetAsync("/profile");
+    63	        response.EnsureSuccessStatusCode();
+    64	        return await response.Content.ReadAsStringAsync();
+    65	    }
+    66	
+    67	    public async Task<byte[]> GenerateInvoicePdfAsync(InvoicePdfRequestDto request)
+    68	    {
+    69	        var response = await _httpClient.PostAsJsonAsync("/api/invoices/pdf", request, JavaJsonOptions);
+    70	        response.EnsureSuccessStatusCode();
+    71	        return await response.Content.ReadAsByteArrayAsync();
+    72	    }
+    73	}
+
+===== Controllers/LegacyProxyController.cs =====
+     1	using FlemanApi.Service;
+     2	using Microsoft.AspNetCore.Authorization;
+     3	using Microsoft.AspNetCore.Mvc;
+     4	
+     5	namespace FlemanApi.Controllers;
+     6	
+     7	// Requirement #11 — proof-of-pattern that this .NET backend can call the
+     8	// legacy Java Spring Boot service (fleman-backend) via HttpClient. Requires
+     9	// fleman-backend to be running on JavaMicroservice:BaseUrl (default
+    10	// http://localhost:8080) — see the README for running both side by side.
+    11	[ApiController]
+    12	[Route("api/legacy")]
+    13	[AllowAnonymous]
+    14	public class LegacyProxyController : ControllerBase
+    15	{
+    16	    private readonly IJavaMicroserviceClient _javaClient;
+    17	
+    18	    public LegacyProxyController(IJavaMicroserviceClient javaClient)
+    19	    {
+    20	        _javaClient = javaClient;
+    21	    }
+    22	
+    23	    [HttpGet("states")]
+    24	    public async Task<IActionResult> ForwardStates()
+    25	    {
+    26	        var json = await _javaClient.GetStatesAsync();
+    27	        return Content(json, "application/json");
+    28	    }
+    29	
+    30	    [HttpGet("health")]
+    31	    public async Task<IActionResult> ForwardHealth()
+    32	    {
+    33	        var text = await _javaClient.GetHealthAsync();
+    34	        return Content(text, "text/plain");
+    35	    }
+    36	}
+
+===== Service/IInvoicePdfService.cs =====
+     1	namespace FlemanApi.Service;
+     2	
+     3	public interface IInvoicePdfService
+     4	{
+     5	    Task<byte[]> GenerateInvoiceAsync(long invoiceId);
+     6	}
+
+===== Service/JavaInvoicePdfService.cs =====
+     1	using FlemanApi.DTO;
+     2	using FlemanApi.Models;
+     3	using FlemanApi.Repository;
+     4	
+     5	namespace FlemanApi.Service;
+     6	
+     7	// Generates the invoice PDF via the Java backend (fleman-backend, see
+     8	// InvoiceController.generateInvoicePdf) instead of generating it locally
+     9	// with QuestPDF. The two backends run against separate databases with
+    10	// independently auto-incrementing ids, so this fetches the invoice/booking/
+    11	// line data from *this* app's own database first and sends the full
+    12	// payload — the Java side never looks anything up by id itself. Requires
+    13	// the Java backend to be running on JavaMicroservice:BaseUrl — see
+    14	// JavaMicroserviceClient. Swap the DI registration in Program.cs back to
+    15	// InvoicePdfService (QuestPDF) to generate locally instead.
+    16	public class JavaInvoicePdfService : IInvoicePdfService
+    17	{
+    18	    private readonly IGenericRepository<InvoiceHeader, long> _invoiceHeaders;
+    19	    private readonly IGenericRepository<InvoiceDetail, long> _invoiceDetails;
+    20	    private readonly IGenericRepository<BookingHeader, long> _bookingHeaders;
+    21	    private readonly IJavaMicroserviceClient _javaClient;
+    22	
+    23	    public JavaInvoicePdfService(
+    24	        IGenericRepository<InvoiceHeader, long> invoiceHeaders,
+    25	        IGenericRepository<InvoiceDetail, long> invoiceDetails,
+    26	        IGenericRepository<BookingHeader, long> bookingHeaders,
+    27	        IJavaMicroserviceClient javaClient)
+    28	    {
+    29	        _invoiceHeaders = invoiceHeaders;
+    30	        _invoiceDetails = invoiceDetails;
+    31	        _bookingHeaders = bookingHeaders;
+    32	        _javaClient = javaClient;
+    33	    }
+    34	
+    35	    public async Task<byte[]> GenerateInvoiceAsync(long invoiceId)
+    36	    {
+    37	        var invoice = await _invoiceHeaders.GetByIdAsync(invoiceId)
+    38	            ?? throw new InvalidOperationException("Invoice not found");
+    39	        var booking = await _bookingHeaders.GetByIdAsync(invoice.BookingId)
+    40	            ?? throw new InvalidOperationException("Booking not found");
+    41	        var lines = await _invoiceDetails.FindAsync(d => d.InvoiceId == invoiceId);
+    42	
+    43	        var request = new InvoicePdfRequestDto
+    44	        {
+    45	            CustomerName = invoice.CustomerName,
+    46	            Email = invoice.Email,
+    47	            Phone = invoice.Phone,
+    48	            ConfirmationNo = booking.ConfirmationNo,
+    49	            VehicleNumber = invoice.VehicleNumber,
+    50	            HandoverDatetime = invoice.HandoverDatetime,
+    51	            ReturnDatetime = invoice.ReturnDatetime,
+    52	            Days = invoice.Days,
+    53	            RentalAmount = invoice.RentalAmount,
+    54	            AddonAmount = invoice.AddonAmount,
+    55	            FuelCharge = invoice.FuelCharge,
+    56	            HandoverFuelLevel = invoice.HandoverFuelLevel,
+    57	            ReturnFuelLevel = invoice.ReturnFuelLevel,
+    58	            ExtraChargeAmount = invoice.ExtraChargeAmount,
+    59	            ExtraMiles = invoice.ExtraMiles,
+    60	            DamageNotes = invoice.DamageNotes,
+    61	            TotalAmount = invoice.TotalAmount,
+    62	            PaymentType = invoice.PaymentType?.ToString(),
+    63	            PaymentStatus = invoice.PaymentStatus?.ToString(),
+    64	            PaymentReference = invoice.PaymentReference,
+    65	            Lines = lines.Select(l => new InvoiceLineItemDto
+    66	            {
+    67	                AddonName = l.AddonName,
+    68	                Quantity = l.Quantity,
+    69	                AddonRate = l.AddonRate,
+    70	                Subtotal = l.Subtotal,
+    71	            }).ToList(),
+    72	        };
+    73	
+    74	        return await _javaClient.GenerateInvoicePdfAsync(request);
+    75	    }
+    76	}
+
+===== Service/InvoicePdfService.cs =====
+     1	//using FlemanApi.Models;
+     2	//using FlemanApi.Repository;
+     3	//using QuestPDF.Fluent;
+     4	//using QuestPDF.Helpers;
+     5	//using QuestPDF.Infrastructure;
+     6	
+     7	//namespace FlemanApi.Service;
+     8	
+     9	//// Mirrors com.fleman.service.impl.InvoicePdfServiceImpl (OpenPDF) using
+    10	//// QuestPDF instead — same sections/content, different PDF library.
+    11	//public class InvoicePdfService : IInvoicePdfService
+    12	//{
+    13	//    private readonly IGenericRepository<InvoiceHeader, long> _invoiceHeaders;
+    14	//    private readonly IGenericRepository<InvoiceDetail, long> _invoiceDetails;
+    15	//    private readonly IGenericRepository<BookingHeader, long> _bookingHeaders;
+    16	
+    17	//    public InvoicePdfService(
+    18	//        IGenericRepository<InvoiceHeader, long> invoiceHeaders,
+    19	//        IGenericRepository<InvoiceDetail, long> invoiceDetails,
+    20	//        IGenericRepository<BookingHeader, long> bookingHeaders)
+    21	//    {
+    22	//        _invoiceHeaders = invoiceHeaders;
+    23	//        _invoiceDetails = invoiceDetails;
+    24	//        _bookingHeaders = bookingHeaders;
+    25	//    }
+    26	
+    27	//    public async Task<byte[]> GenerateInvoiceAsync(long invoiceId)
+    28	//    {
+    29	//        var invoice = await _invoiceHeaders.GetByIdAsync(invoiceId)
+    30	//            ?? throw new InvalidOperationException("Invoice not found");
+    31	//        var booking = await _bookingHeaders.GetByIdAsync(invoice.BookingId)
+    32	//            ?? throw new InvalidOperationException("Booking not found");
+    33	//        var lines = await _invoiceDetails.FindAsync(d => d.InvoiceId == invoiceId);
+    34	
+    35	//        var document = Document.Create(container =>
+    36	//        {
+    37	//            container.Page(page =>
+    38	//            {
+    39	//                page.Size(PageSizes.A4);
+    40	//                page.Margin(2, Unit.Centimetre);
+    41	//                page.DefaultTextStyle(x => x.FontSize(11));
+    42	
+    43	//                page.Content().Column(col =>
+    44	//                {
+    45	//                    col.Item().AlignCenter().Text("WanderCar Rental Services").FontSize(20).Bold();
+    46	//                    col.Item().AlignCenter().Text("RETURN INVOICE").FontSize(13).Bold();
+    47	//                    col.Item().PaddingVertical(5).LineHorizontal(1);
+    48	
+    49	//                    col.Item().Text("Customer Details").FontSize(13).Bold();
+    50	//                    col.Item().Text($"Name              : {invoice.CustomerName}");
+    51	//                    col.Item().Text($"Email             : {invoice.Email}");
+    52	//                    col.Item().Text($"Phone             : {invoice.Phone}");
+    53	
+    54	//                    col.Item().PaddingTop(8).Text("Booking Details").FontSize(13).Bold();
+    55	//                    col.Item().Text($"Confirmation No   : {booking.ConfirmationNo}");
+    56	//                    col.Item().Text($"Vehicle           : {invoice.VehicleNumber}");
+    57	//                    col.Item().Text($"Handed over       : {invoice.HandoverDatetime}");
+    58	//                    col.Item().Text($"Returned          : {invoice.ReturnDatetime}");
+    59	//                    col.Item().Text($"Duration          : {invoice.Days}{(invoice.Days == 1 ? " day" : " days")}");
+    60	
+    61	//                    col.Item().PaddingVertical(5).LineHorizontal(1);
+    62	
+    63	//                    col.Item().Text("Charges").FontSize(13).Bold();
+    64	//                    col.Item().Text($"Rental Amount     : ₹ {invoice.RentalAmount:F2}");
+    65	//                    foreach (var line in lines)
+    66	//                    {
+    67	//                        col.Item().Text($"  {line.AddonName,-16}: {line.Quantity} x ₹ {line.AddonRate:F2} = ₹ {line.Subtotal:F2}");
+    68	//                    }
+    69	//                    col.Item().Text($"Add-on Amount     : ₹ {invoice.AddonAmount:F2}");
+    70	
+    71	//                    if (invoice.FuelCharge is > 0)
+    72	//                    {
+    73	//                        col.Item().Text(
+    74	//                            $"Fuel Charge       : ₹ {invoice.FuelCharge:F2} (returned at {invoice.ReturnFuelLevel}%, handed over at {invoice.HandoverFuelLevel}%)");
+    75	//                    }
+    76	//                    if (invoice.ExtraChargeAmount is > 0)
+    77	//                    {
+    78	//                        var kmNote = invoice.ExtraMiles is > 0 ? $" ({invoice.ExtraMiles} extra km)" : "";
+    79	//                        col.Item().Text($"Extra Charges     : ₹ {invoice.ExtraChargeAmount:F2}{kmNote}");
+    80	//                    }
+    81	//                    if (!string.IsNullOrWhiteSpace(invoice.DamageNotes))
+    82	//                    {
+    83	//                        col.Item().Text($"Damage Notes      : {invoice.DamageNotes}");
+    84	//                    }
+    85	
+    86	//                    col.Item().PaddingVertical(5).LineHorizontal(1);
+    87	
+    88	//                    col.Item().Text("Payment Summary").FontSize(13).Bold();
+    89	//                    col.Item().Text($"Total Amount      : ₹ {invoice.TotalAmount:F2}");
+    90	//                    col.Item().Text($"Payment Type      : {(invoice.PaymentType is not null ? invoice.PaymentType.ToString() : "Not collected")}");
+    91	//                    col.Item().Text($"Payment Status    : {invoice.PaymentStatus}");
+    92	//                    col.Item().Text($"Payment Reference : {invoice.PaymentReference}");
+    93	
+    94	//                    col.Item().PaddingVertical(5).LineHorizontal(1);
+    95	//                    col.Item().AlignCenter().Text("Thank you for choosing WanderCar.\nWe wish you a safe and pleasant journey!")
+    96	//                        .FontSize(13).Bold();
+    97	//                });
+    98	//            });
+    99	//        });
+   100	
+   101	//        return document.GeneratePdf();
+   102	//    }
+   103	//}
+
+===== Util/RentalRateCalculator.cs =====
+     1	using FlemanApi.Models;
+     2	
+     3	namespace FlemanApi.Util;
+     4	
+     5	// Shared by BookingService (booking-time estimate) and StaffService (the
+     6	// actual return invoice) so both price a rental the same way: pack whole
+     7	// months first, then whole weeks out of what's left, then bill the
+     8	// remaining days at the daily rate.
+     9	public static class RentalRateCalculator
+    10	{
+    11	    public static double CalculateRentalAmount(CarType carType, int days)
+    12	    {
+    13	        var dailyRate = carType.DailyRate;
+    14	        var weeklyRate = carType.WeeklyRate ?? 0.0;
+    15	        var monthlyRate = carType.MonthlyRate ?? 0.0;
+    16	
+    17	        var remainingDays = days;
+    18	        var amount = 0.0;
+    19	
+    20	        if (monthlyRate > 0 && remainingDays >= 30)
+    21	        {
+    22	            var months = remainingDays / 30;
+    23	            amount += months * monthlyRate;
+    24	            remainingDays %= 30;
+    25	        }
+    26	        if (weeklyRate > 0 && remainingDays >= 7)
+    27	        {
+    28	            var weeks = remainingDays / 7;
+    29	            amount += weeks * weeklyRate;
+    30	            remainingDays %= 7;
+    31	        }
+    32	        amount += remainingDays * dailyRate;
+    33	
+    34	        return amount;
+    35	    }
+    36	}
+
+===== Security/JwtTokenService.cs =====
+     1	using System.IdentityModel.Tokens.Jwt;
+     2	using System.Security.Claims;
+     3	using System.Text;
+     4	using Microsoft.Extensions.Options;
+     5	using Microsoft.IdentityModel.Tokens;
+     6	
+     7	namespace FlemanApi.Security;
+     8	
+     9	public interface IJwtTokenService
+    10	{
+    11	    string GenerateToken(long userId, string email, string role);
+    12	}
+    13	
+    14	// Mirrors com.fleman.security.JwtUtil — HS256 tokens with subject=userId
+    15	// and claims "email"/"role", same shape the Java side issues, so tokens
+    16	// are structurally interchangeable between the two backends.
+    17	public class JwtTokenService : IJwtTokenService
+    18	{
+    19	    private readonly JwtSettings _settings;
+    20	
+    21	    public JwtTokenService(IOptions<JwtSettings> settings)
+    22	    {
+    23	        _settings = settings.Value;
+    24	    }
+    25	
+    26	    public string GenerateToken(long userId, string email, string role)
+    27	    {
+    28	        var key = new SymmetricSecurityKey(Encoding.UTF8.GetBytes(_settings.Secret));
+    29	        var credentials = new SigningCredentials(key, SecurityAlgorithms.HmacSha256);
+    30	
+    31	        var claims = new[]
+    32	        {
+    33	            new Claim(JwtRegisteredClaimNames.Sub, userId.ToString()),
+    34	            new Claim("email", email),
+    35	            new Claim("role", role),
+    36	        };
+    37	
+    38	        var now = DateTime.UtcNow;
+    39	        var token = new JwtSecurityToken(
+    40	            claims: claims,
+    41	            notBefore: now,
+    42	            expires: now.AddMilliseconds(_settings.ExpirationMs),
+    43	            signingCredentials: credentials);
+    44	
+    45	        return new JwtSecurityTokenHandler().WriteToken(token);
+    46	    }
+    47	}
+
+===== Security/AuthenticatedUserAccessor.cs =====
+     1	using System.Security.Claims;
+     2	using FlemanApi.Exceptions;
+     3	using System.Net;
+     4	
+     5	namespace FlemanApi.Security;
+     6	
+     7	public record CurrentUser(long UserId, string Email, string Role);
+     8	
+     9	public interface IAuthenticatedUserAccessor
+    10	{
+    11	    bool IsAuthenticated { get; }
+    12	    CurrentUser GetCurrentUser();
+    13	    long GetCurrentUserId();
+    14	    string GetCurrentRole();
+    15	}
+    16	
+    17	// Mirrors com.fleman.security.AuthenticatedUser — a thin wrapper over the
+    18	// current request's ClaimsPrincipal (populated by JWT bearer auth), used by
+    19	// controllers/services instead of parameter-binding [ClaimsPrincipal] every time.
+    20	public class AuthenticatedUserAccessor : IAuthenticatedUserAccessor
+    21	{
+    22	    private readonly IHttpContextAccessor _httpContextAccessor;
+    23	
+    24	    public AuthenticatedUserAccessor(IHttpContextAccessor httpContextAccessor)
+    25	    {
+    26	        _httpContextAccessor = httpContextAccessor;
+    27	    }
+    28	
+    29	    public bool IsAuthenticated =>
+    30	        _httpContextAccessor.HttpContext?.User?.Identity?.IsAuthenticated ?? false;
+    31	
+    32	    public CurrentUser GetCurrentUser()
+    33	    {
+    34	        var principal = _httpContextAccessor.HttpContext?.User
+    35	            ?? throw new ApiException("Not authenticated", HttpStatusCode.Unauthorized);
+    36	
+    37	        var sub = principal.FindFirstValue(ClaimTypes.NameIdentifier)
+    38	                  ?? principal.FindFirstValue("sub")
+    39	                  ?? throw new ApiException("Not authenticated", HttpStatusCode.Unauthorized);
+    40	
+    41	        var email = principal.FindFirstValue("email") ?? string.Empty;
+    42	        var role = principal.FindFirstValue(ClaimTypes.Role) ?? principal.FindFirstValue("role") ?? string.Empty;
+    43	
+    44	        return new CurrentUser(long.Parse(sub), email, role);
+    45	    }
+    46	
+    47	    public long GetCurrentUserId() => GetCurrentUser().UserId;
+    48	
+    49	    public string GetCurrentRole() => GetCurrentUser().Role;
+    50	}
+
+===== Controllers/VehicleController.cs =====
+     1	using FlemanApi.Service;
+     2	using Microsoft.AspNetCore.Authorization;
+     3	using Microsoft.AspNetCore.Mvc;
+     4	
+     5	namespace FlemanApi.Controllers;
+     6	
+     7	[ApiController]
+     8	[Route("api")]
+     9	[AllowAnonymous]
+    10	public class VehicleController : ControllerBase
+    11	{
+    12	    private readonly IVehicleService _vehicleService;
+    13	
+    14	    public VehicleController(IVehicleService vehicleService)
+    15	    {
+    16	        _vehicleService = vehicleService;
+    17	    }
+    18	
+    19	    [HttpGet("car-types")]
+    20	    public async Task<IActionResult> GetCarTypes(
+    21	        [FromQuery] long? hubId, [FromQuery] DateTime? pickupDatetime, [FromQuery] DateTime? returnDatetime) =>
+    22	        Ok(await _vehicleService.GetCarTypesForHubAsync(hubId, pickupDatetime, returnDatetime));
+    23	
+    24	    [HttpGet("cars/available")]
+    25	    public async Task<IActionResult> GetAvailableCars(
+    26	        [FromQuery] long? hubId, [FromQuery] DateTime? pickupDatetime, [FromQuery] DateTime? returnDatetime) =>
+    27	        Ok(await _vehicleService.GetAvailableCarsAsync(hubId, pickupDatetime, returnDatetime));
+    28	
+    29	    [HttpGet("cars/{carId:long}")]
+    30	    public async Task<IActionResult> GetCarById(long carId) => Ok(await _vehicleService.GetCarByIdAsync(carId));
+    31	}
+
+===== Controllers/BookingController.cs =====
+     1	using FlemanApi.DTO;
+     2	using FlemanApi.Security;
+     3	using FlemanApi.Service;
+     4	using Microsoft.AspNetCore.Authorization;
+     5	using Microsoft.AspNetCore.Mvc;
+     6	
+     7	namespace FlemanApi.Controllers;
+     8	
+     9	[ApiController]
+    10	[Route("api/bookings")]
+    11	public class BookingController : ControllerBase
+    12	{
+    13	    private readonly IBookingService _bookingService;
+    14	    private readonly IAuthenticatedUserAccessor _currentUser;
+    15	    private readonly ILogger<BookingController> _logger;
+    16	
+    17	    public BookingController(IBookingService bookingService, IAuthenticatedUserAccessor currentUser, ILogger<BookingController> logger)
+    18	    {
+    19	        _bookingService = bookingService;
+    20	        _currentUser = currentUser;
+    21	        _logger = logger;
+    22	    }
+    23	
+    24	    // Guest booking is permitted — SecurityConfig allows POST /api/bookings anonymously.
+    25	    [HttpPost]
+    26	    [AllowAnonymous]
+    27	    public async Task<IActionResult> CreateBooking([FromBody] CreateBookingRequest request)
+    28	    {
+    29	        _logger.LogDebug("createBooking request: {@Request}", request);
+    30	        var response = await _bookingService.CreateBookingAsync(request);
+    31	        _logger.LogInformation("Booking created, confirmationNo={ConfirmationNo}", response.ConfirmationNo);
+    32	        return Ok(response);
+    33	    }
+    34	
+    35	    [HttpGet("confirmation/{confirmationNo}")]
+    36	    public async Task<IActionResult> GetByConfirmation(string confirmationNo) =>
+    37	        Ok(await _bookingService.GetBookingByConfirmationAsync(confirmationNo));
+    38	
+    39	    [HttpGet("me")]
+    40	    public async Task<IActionResult> GetLastForCustomer() =>
+    41	        Ok(await _bookingService.GetLastBookingForCustomerAsync(_currentUser.GetCurrentUserId()));
+    42	
+    43	    // Every one of the customer's bookings, not just the last one — backs
+    44	    // the "modify booking" page's picker.
+    45	    [HttpGet]
+    46	    public async Task<IActionResult> GetMyBookings() =>
+    47	        Ok(await _bookingService.GetBookingsForCustomerAsync(_currentUser.GetCurrentUserId()));
+    48	
+    49	    [HttpPut("confirmation/{confirmationNo}")]
+    50	    public async Task<IActionResult> ModifyBooking(string confirmationNo, [FromBody] ModifyBookingRequest request) =>
+    51	        Ok(await _bookingService.ModifyBookingAsync(confirmationNo, request));
+    52	
+    53	    [HttpDelete("confirmation/{confirmationNo}")]
+    54	    public async Task<IActionResult> CancelBooking(string confirmationNo) =>
+    55	        Ok(await _bookingService.CancelBookingAsync(confirmationNo));
+    56	}
+
+===== Controllers/AuthController.cs =====
+     1	using FlemanApi.DTO;
+     2	using FlemanApi.Service;
+     3	using Microsoft.AspNetCore.Authorization;
+     4	using Microsoft.AspNetCore.Mvc;
+     5	
+     6	namespace FlemanApi.Controllers;
+     7	
+     8	[ApiController]
+     9	[Route("api/auth")]
+    10	[AllowAnonymous]
+    11	public class AuthController : ControllerBase
+    12	{
+    13	    private readonly ICustomerService _customerService;
+    14	
+    15	    public AuthController(ICustomerService customerService)
+    16	    {
+    17	        _customerService = customerService;
+    18	    }
+    19	
+    20	    [HttpPost("login")]
+    21	    public async Task<IActionResult> Login([FromBody] LoginRequest request) =>
+    22	        Ok(await _customerService.LoginAsync(request));
+    23	
+    24	    [HttpPost("register")]
+    25	    public async Task<IActionResult> Register([FromBody] RegisterRequest request) =>
+    26	        Ok(await _customerService.RegisterAsync(request));
+    27	
+    28	    [HttpPost("staff-login")]
+    29	    public async Task<IActionResult> StaffLogin([FromBody] StaffLoginRequest request) =>
+    30	        Ok(await _customerService.StaffLoginAsync(request));
+    31	}
+
+===== Models/Car.cs =====
+     1	using System.ComponentModel.DataAnnotations;
+     2	using System.ComponentModel.DataAnnotations.Schema;
+     3	
+     4	namespace FlemanApi.Models;
+     5	
+     6	public enum FuelType { PETROL, DIESEL, CNG, ELECTRIC, HYBRID }
+     7	public enum CarStatus { AVAILABLE, BOOKED, UNDER_MAINTENANCE }
+     8	
+     9	[Table("cars")]
+    10	public class Car
+    11	{
+    12	    [Key]
+    13	    public long CarId { get; set; }
+    14	
+    15	    [Required]
+    16	    public long CarTypeId { get; set; }
+    17	
+    18	    [Required]
+    19	    public long HubId { get; set; }
+    20	
+    21	    [Required, MaxLength(20)]
+    22	    public string VehicleNumber { get; set; } = string.Empty;
+    23	
+    24	    [MaxLength(50)]
+    25	    public string? Brand { get; set; }
+    26	
+    27	    [MaxLength(50)]
+    28	    public string? Model { get; set; }
+    29	
+    30	    public int? ManufactureYear { get; set; }
+    31	
+    32	    [MaxLength(30)]
+    33	    public string? Color { get; set; }
+    34	
+    35	    public FuelType? FuelType { get; set; }
+    36	
+    37	    public int? SeatingCapacity { get; set; }
+    38	    public double? Mileage { get; set; }
+    39	    public int? Odometer { get; set; }
+    40	    public int? FuelLevel { get; set; }
+    41	    public bool IsAvailable { get; set; }
+    42	    public CarStatus? Status { get; set; }
+    43	}
+

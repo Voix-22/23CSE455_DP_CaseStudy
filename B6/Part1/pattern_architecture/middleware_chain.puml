@@ -1,0 +1,12 @@
+@startuml
+title HTTP Middleware Chain
+class ExceptionHandlingMiddleware
+class RequestLoggingMiddleware
+class RequestDelegate
+class ControllerPipeline
+
+ExceptionHandlingMiddleware --> RequestDelegate : _next(context)
+RequestLoggingMiddleware --> RequestDelegate : _next(context)
+ExceptionHandlingMiddleware --> RequestLoggingMiddleware : pipeline order
+RequestLoggingMiddleware --> ControllerPipeline : next
+@enduml

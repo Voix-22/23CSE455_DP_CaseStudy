@@ -1,0 +1,26 @@
+@startuml
+title WanderCar ASP.NET Core Baseline Architecture
+skinparam componentStyle rectangle
+actor Client
+rectangle "ASP.NET Core 8 / FlemanApi" {
+  [Controllers] as C
+  [Service Layer] as S
+  [Repository Layer] as R
+  [Security] as SEC
+  [Middleware Pipeline] as MW
+  [Email Background Worker] as EQ
+  [Legacy Java Client] as J
+  database "MySQL / EF Core" as DB
+}
+Client --> MW
+MW --> C
+C --> S
+S --> R
+R --> DB
+C --> SEC
+S --> SEC
+S --> EQ
+EQ --> J
+S --> J
+J --> "Java backend" as JAVA
+@enduml

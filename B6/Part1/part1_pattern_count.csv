@@ -1,0 +1,10 @@
+source_version,summary,pattern_name,count
+dfc61ab8dd6f9bbb2301171457dc03946a249576,Confirmed baseline pattern count,Repository,1
+dfc61ab8dd6f9bbb2301171457dc03946a249576,Confirmed baseline pattern count,Dependency Injection / IoC,1
+dfc61ab8dd6f9bbb2301171457dc03946a249576,Confirmed baseline pattern count,Service Layer,1
+dfc61ab8dd6f9bbb2301171457dc03946a249576,Confirmed baseline pattern count,Middleware Pipeline / Chain of Responsibility,1
+dfc61ab8dd6f9bbb2301171457dc03946a249576,Confirmed baseline pattern count,Producer–Consumer,1
+dfc61ab8dd6f9bbb2301171457dc03946a249576,Confirmed baseline pattern count,Adapter,1
+dfc61ab8dd6f9bbb2301171457dc03946a249576,Confirmed baseline pattern count,Proxy,1
+dfc61ab8dd6f9bbb2301171457dc03946a249576,Confirmed baseline pattern count,Strangler Fig,1
+dfc61ab8dd6f9bbb2301171457dc03946a249576,Confirmed baseline pattern count,DTO,1

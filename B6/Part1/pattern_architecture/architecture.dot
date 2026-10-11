@@ -1,0 +1,1 @@
+digraph G { rankdir=LR; Client->Middleware; Middleware->Controllers; Controllers->Services; Services->Repositories; Repositories->MySQL; Services->Security; Services->EmailQueue; Services->JavaClient; EmailQueue->MailKit; JavaClient->JavaBackend; }

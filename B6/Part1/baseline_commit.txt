@@ -1,0 +1,23 @@
+Repository: https://github.com/Naveen-verma-7697/FleetManagment
+Branch: main
+
+Baseline commit:
+dfc61ab8dd6f9bbb2301171457dc03946a249576
+
+Short commit:
+dfc61ab
+
+Commit date:
+2026-08-24
+
+Commit message:
+Clean up comments in IAvailabilityRepository
+
+Application source analyzed:
+WanderCar_DotNet/src/FlemanApi
+
+Verification:
+The supplied FleetManagment-main.zip was compared against the
+dfc61ab version of IAvailabilityRepository.cs and the preceding
+47586ff version of MappingProfile.cs. The source matches the
+post-dfc61ab baseline.

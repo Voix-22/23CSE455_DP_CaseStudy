@@ -1,0 +1,13 @@
+@startuml
+title Service Layer - Vehicle Management
+class VehicleController
+interface IVehicleService
+class VehicleService
+interface "IGenericRepository<Car,long>" as ICarRepo
+interface IAvailabilityRepository
+
+VehicleController --> IVehicleService
+IVehicleService <|.. VehicleService
+VehicleService --> ICarRepo
+VehicleService --> IAvailabilityRepository
+@enduml

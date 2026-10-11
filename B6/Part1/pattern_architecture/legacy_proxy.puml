@@ -1,0 +1,13 @@
+@startuml
+title Legacy Java API Proxy
+class LegacyProxyController
+interface IJavaMicroserviceClient
+class JavaMicroserviceClient
+class HttpClient
+cloud "Java backend" as Java
+
+LegacyProxyController --> IJavaMicroserviceClient
+IJavaMicroserviceClient <|.. JavaMicroserviceClient
+JavaMicroserviceClient --> HttpClient
+HttpClient --> Java
+@enduml

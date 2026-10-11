@@ -1,0 +1,371 @@
+PART 1 — INSPECTED MODULES
+Application: WanderCar / Fleman Vehicle Rental and Fleet Management System
+Baseline source:
+WanderCar_DotNet/src/FlemanApi
+
+Baseline commit:
+dfc61ab8dd6f9bbb2301171457dc03946a249576
+
+Purpose:
+The following modules were inspected for Part 1 design-pattern discovery.
+The scope covers the eight functional areas specified in the case study.
+
+============================================================
+1. VEHICLE MANAGEMENT
+============================================================
+
+Primary controller:
+- Controllers/VehicleController.cs
+
+Services:
+- Service/IVehicleService.cs
+- Service/VehicleService.cs
+
+Domain models:
+- Models/Car.cs
+- Models/CarType.cs
+
+DTOs:
+- DTO/CarDTO.cs
+- DTO/CarTypeDTO.cs
+- DTO/CarTypeAvailabilityDTO.cs
+
+Persistence:
+- Repository/IGenericRepository.cs
+- Repository/GenericRepository.cs
+- Repository/IAvailabilityRepository.cs
+- Repository/AvailabilityRepository.cs
+
+Related application configuration:
+- Program.cs
+
+
+============================================================
+2. CUSTOMER MANAGEMENT
+============================================================
+
+Primary controller:
+- Controllers/CustomerController.cs
+- Controllers/ProfileController.cs
+
+Services:
+- Service/ICustomerService.cs
+- Service/CustomerService.cs
+
+Domain model:
+- Models/Customer.cs
+
+DTOs:
+- DTO/CustomerDTO.cs
+- DTO/UpdateCustomerRequest.cs
+- DTO/RegisterRequest.cs
+
+Persistence:
+- Repository/IGenericRepository.cs
+- Repository/GenericRepository.cs
+
+Authentication-related customer flow:
+- Controllers/AuthController.cs
+- Security/JwtTokenService.cs
+- Security/AuthenticatedUserAccessor.cs
+
+
+============================================================
+3. RESERVATION / BOOKING
+============================================================
+
+Primary controller:
+- Controllers/BookingController.cs
+
+Services:
+- Service/IBookingService.cs
+- Service/BookingService.cs
+
+Domain models:
+- Models/BookingHeader.cs
+- Models/BookingDetail.cs
+
+DTOs:
+- DTO/CreateBookingRequest.cs
+- DTO/BookingResponseDTO.cs
+- DTO/BookingDetailDTO.cs
+- DTO/ModifyBookingRequest.cs
+- DTO/GuestCustomerRequest.cs
+- DTO/HandoverRequest.cs
+- DTO/ProcessReturnRequest.cs
+
+Validation:
+- Validators/CreateBookingRequestValidator.cs
+- Validators/GuestCustomerRequestValidator.cs
+
+Persistence:
+- Repository/IGenericRepository.cs
+- Repository/GenericRepository.cs
+- Repository/IAvailabilityRepository.cs
+- Repository/AvailabilityRepository.cs
+
+Related services:
+- Service/IVehicleService.cs
+- Service/VehicleService.cs
+- Service/ICustomerService.cs
+- Service/CustomerService.cs
+- Service/IAddonService.cs
+- Service/AddonService.cs
+- Service/IEmailService.cs
+- Service/EmailService.cs
+
+Pricing dependency:
+- Util/RentalRateCalculator.cs
+
+
+============================================================
+4. PRICING
+============================================================
+
+Primary pricing implementation:
+- Util/RentalRateCalculator.cs
+
+Related usage:
+- Service/BookingService.cs
+- Service/StaffService.cs
+
+Related domain:
+- Models/CarType.cs
+
+Purpose of inspection:
+To determine whether pricing uses interchangeable pricing policies
+or a Strategy-style collaboration in the baseline.
+
+Baseline observation:
+RentalRateCalculator is a static calculator. No confirmed
+IPricingStrategy hierarchy was identified in the baseline source.
+
+
+============================================================
+5. PAYMENT / BILLING
+============================================================
+
+Primary service:
+- Service/StaffService.cs
+
+Controllers:
+- Controllers/StaffController.cs
+
+Domain models:
+- Models/InvoiceHeader.cs
+- Models/InvoiceDetail.cs
+
+DTOs:
+- DTO/InvoiceResponseDTO.cs
+- DTO/InvoicePdfRequestDto.cs
+- DTO/ProcessReturnRequest.cs
+
+Payment-related elements inspected:
+- PaymentType
+- PaymentStatus
+- PaymentReference
+
+Invoice/PDF abstraction:
+- Service/IInvoicePdfService.cs
+- Service/InvoicePdfService.cs
+- Service/JavaInvoicePdfService.cs
+
+Purpose of inspection:
+To identify payment, billing and invoice collaborations and determine
+whether any dedicated payment design pattern is present.
+
+
+============================================================
+6. MAINTENANCE
+============================================================
+
+Domain model:
+- Models/Car.cs
+
+Related vehicle state:
+- CarStatus.UNDER_MAINTENANCE
+
+Availability:
+- Repository/IAvailabilityRepository.cs
+- Repository/AvailabilityRepository.cs
+
+Vehicle service:
+- Service/IVehicleService.cs
+- Service/VehicleService.cs
+
+Purpose of inspection:
+To determine how vehicle maintenance affects fleet availability
+and whether a dedicated maintenance scheduling subsystem exists.
+
+Baseline observation:
+The baseline represents maintenance through vehicle status.
+A dedicated maintenance scheduling service/scheduler was not
+confirmed in the baseline.
+
+
+============================================================
+7. NOTIFICATION
+============================================================
+
+Email abstraction:
+- Service/IEmailSender.cs
+- Service/IEmailService.cs
+
+Email implementations:
+- Service/MailKitEmailSender.cs
+- Service/EmailService.cs
+
+Background processing:
+- Service/EmailBackgroundQueue.cs
+- Service/EmailQueueHostedService.cs
+
+Controller:
+- Controllers/EmailController.cs
+
+Related application registration:
+- Program.cs
+
+Purpose of inspection:
+To identify notification architecture and determine whether the
+email system exhibits a Producer–Consumer/background processing
+collaboration.
+
+
+============================================================
+8. AUTHENTICATION / SECURITY
+============================================================
+
+Controllers:
+- Controllers/AuthController.cs
+- Controllers/GoogleAuthController.cs
+
+Security services:
+- Security/JwtTokenService.cs
+- Security/AuthenticatedUserAccessor.cs
+- Security/JwtSettings.cs
+
+DTOs:
+- DTO/LoginRequest.cs
+- DTO/RegisterRequest.cs
+- DTO/AuthResponse.cs
+- DTO/StaffLoginRequest.cs
+- DTO/StaffAuthResponse.cs
+
+Validation:
+- Validators/LoginRequestValidator.cs
+- Validators/RegisterRequestValidator.cs
+- Validators/StaffLoginRequestValidator.cs
+
+Application configuration:
+- Program.cs
+
+Purpose of inspection:
+To identify authentication/security collaborations and framework
+idioms such as dependency injection and ASP.NET Core authentication.
+
+
+============================================================
+CROSS-CUTTING MODULES INSPECTED
+============================================================
+
+Middleware:
+- Middleware/ExceptionHandlingMiddleware.cs
+- Middleware/RequestLoggingMiddleware.cs
+
+Dependency injection / application composition:
+- Program.cs
+
+Object mapping:
+- AutoMapper/MappingProfile.cs
+
+Persistence context:
+- Data/FlemanDbContext.cs
+
+Data seeding:
+- Data/DataSeeder.cs
+
+Generic application service:
+- Service/IGenericService.cs
+- Service/GenericService.cs
+
+Exceptions:
+- Exceptions/ApiException.cs
+- Exceptions/ErrorResponse.cs
+- Exceptions/ResourceNotFoundException.cs
+
+Legacy Java integration:
+- Controllers/LegacyProxyController.cs
+- Service/IJavaMicroserviceClient.cs
+- Service/JavaMicroserviceClient.cs
+
+Application configuration:
+- FlemanApi.csproj
+- appsettings.json
+
+
+============================================================
+EXCLUDED FROM PRIMARY PATTERN DISCOVERY
+============================================================
+
+The following were not used as primary design-pattern evidence:
+
+1. Migrations/
+   Reason:
+   Entity Framework generated migration files are database-schema
+   artifacts rather than the main application collaborations being
+   investigated.
+
+2. Properties/launchSettings.json
+   Reason:
+   Development launch configuration; not application pattern evidence.
+
+3. FlemanApi.http
+   Reason:
+   HTTP request examples; not implementation evidence.
+
+4. Generated build/output folders, if present
+   Reason:
+   Compiled/generated artifacts are not source-pattern evidence.
+
+5. Frontend source
+   Reason:
+   Part 1 baseline scope is the ASP.NET Core backend.
+
+6. Java backend source
+   Reason:
+   The Java backend is treated as an external/legacy dependency
+   when analyzing the .NET JavaMicroserviceClient integration.
+   It is not part of the primary ASP.NET Core baseline.
+
+7. Secrets / credentials in configuration
+   Reason:
+   Not required for pattern discovery and must not be committed
+   to the submission repository.
+
+
+============================================================
+PART 1 DISCOVERY SCOPE SUMMARY
+============================================================
+
+Functional areas:
+1. Vehicle management
+2. Customer management
+3. Reservation / booking
+4. Pricing
+5. Payment / billing
+6. Maintenance
+7. Notification
+8. Authentication
+
+Cross-cutting areas:
+- Repository/data access
+- Service layer
+- Middleware
+- Dependency injection
+- Email background processing
+- Legacy Java integration
+- Mapping
+- Validation
+
+Primary source root:
+WanderCar_DotNet/src/FlemanApi

@@ -1,0 +1,1 @@
+digraph G { rankdir=LR; C[label="LegacyProxyController"]; I[label="IJavaMicroserviceClient"]; J[label="JavaMicroserviceClient"]; H[label="HttpClient"]; B[label="Java backend"]; C->I; I->J[label="implemented by"]; J->H; H->B; }

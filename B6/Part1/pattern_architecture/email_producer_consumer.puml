@@ -1,0 +1,17 @@
+@startuml
+title Producer-Consumer Email Background Processing
+interface IEmailBackgroundQueue
+class EmailService
+class EmailBackgroundQueue
+class EmailQueueHostedService
+interface IEmailSender
+class MailKitEmailSender
+queue "Channel<T>" as Channel
+
+IEmailBackgroundQueue <|.. EmailBackgroundQueue
+IEmailSender <|.. MailKitEmailSender
+EmailService --> IEmailBackgroundQueue : Enqueue(workItem)
+EmailBackgroundQueue --> Channel : bounded queue
+EmailQueueHostedService --> IEmailBackgroundQueue : ReadAllAsync
+EmailQueueHostedService --> IEmailSender : execute work item
+@enduml

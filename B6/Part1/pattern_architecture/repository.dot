@@ -1,0 +1,1 @@
+digraph G { rankdir=TB; IRepo[label="IGenericRepository<TEntity,TKey>"]; Repo[label="GenericRepository<TEntity,TKey>"]; VS[label="VehicleService"]; BS[label="BookingService"]; DB[label="FlemanDbContext"]; IRepo->Repo[label="implemented by"]; VS->IRepo[label="depends on"]; BS->IRepo[label="depends on"]; Repo->DB; }
